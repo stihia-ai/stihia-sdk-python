@@ -1,5 +1,6 @@
 # Stihia SDK for Python
 
+[![Website](https://img.shields.io/badge/stihia.ai-website-blue)](https://stihia.ai)
 [![CI](https://github.com/stihia-ai/stihia-sdk-python/actions/workflows/ci.yml/badge.svg)](https://github.com/stihia-ai/stihia-sdk-python/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/stihia)](https://pypi.org/project/stihia/)
 [![Python](https://img.shields.io/pypi/pyversions/stihia)](https://pypi.org/project/stihia/)

@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/stihia-ai/stihia-sdk-python"
+Homepage = "https://stihia.ai"
 Documentation = "https://github.com/stihia-ai/stihia-sdk-python#readme"
 Repository = "https://github.com/stihia-ai/stihia-sdk-python"
 Issues = "https://github.com/stihia-ai/stihia-sdk-python/issues"

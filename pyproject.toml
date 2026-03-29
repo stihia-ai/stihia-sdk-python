@@ -1,0 +1,34 @@
+[project]
+name = "stihia"
+dynamic = ["version"]
+requires-python = ">=3.14"
+description = "Python SDK for the Stihia real-time threat detection API for AI systems."
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+]
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0"
+
+[tool.hatch.version.raw-options]
+root = "../../../"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stihia"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

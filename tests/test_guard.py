@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
 from stihia.exceptions import StihiaError, StihiaThreatDetectedError
 from stihia.guard import SenseGuard, _severity_meets_threshold
 from stihia.models import SenseOperation, SignalSeverity
@@ -43,9 +44,7 @@ def _make_sense_operation(severity: str = "low") -> SenseOperation:
                     "latency_ms": 40,
                     "payload": {
                         "severity": severity,
-                        "categories": ["prompt_injection"]
-                        if severity != "low"
-                        else ["neutral"],
+                        "categories": ["prompt_injection"] if severity != "low" else ["neutral"],
                         "confidence": 0.9,
                         "details": {},
                     },
@@ -94,9 +93,7 @@ def _make_split_client(
         nonlocal call_count
         call_count += 1
         sensor = kwargs.get("sensor", "")
-        is_output = sensor == "output-sensor" or (
-            isinstance(sensor, dict) and sensor.get("key") == "output-sensor"
-        )
+        is_output = sensor == "output-sensor" or (isinstance(sensor, dict) and sensor.get("key") == "output-sensor")
         if is_output:
             if output_delay:
                 await asyncio.sleep(output_delay)
@@ -256,7 +253,7 @@ async def test_shield_called_twice_raises():
     client = _make_client(_make_sense_operation("low"))
     guard = SenseGuard(client, **COMMON_KWARGS)
     _ = [item async for item in guard.shield(_async_iter([1]))]
-    with pytest.raises(RuntimeError, match="shield.*only.*once"):
+    with pytest.raises(RuntimeError, match=r"shield.*only.*once"):
         async for _ in guard.shield(_async_iter([1])):
             pass
 
@@ -394,9 +391,7 @@ async def test_periodic_output_checks_fire():
         output_check_interval=0.02,
         **COMMON_KWARGS,
     )
-    result = [
-        item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.03))
-    ]
+    result = [item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.03))]
     assert result == [1, 2, 3, 4, 5]
     # At least 1 periodic + 1 final = 2 output calls, plus 1 input call
     assert client.asense.call_count >= 3
@@ -423,11 +418,7 @@ async def test_chunk_to_text_callback():
     assert result == chunks
 
     # Verify the output sense call included accumulated text
-    output_calls = [
-        c
-        for c in client.asense.call_args_list
-        if c.kwargs.get("sensor") == "output-sensor"
-    ]
+    output_calls = [c for c in client.asense.call_args_list if c.kwargs.get("sensor") == "output-sensor"]
     assert len(output_calls) >= 1
     messages = output_calls[-1].kwargs["messages"]
     assistant_msg = messages[-1]
@@ -450,11 +441,7 @@ async def test_output_messages_include_input():
     )
     _ = [item async for item in guard.shield(_async_iter(["a", "b"]))]
 
-    output_calls = [
-        c
-        for c in client.asense.call_args_list
-        if c.kwargs.get("sensor") == "output-sensor"
-    ]
+    output_calls = [c for c in client.asense.call_args_list if c.kwargs.get("sensor") == "output-sensor"]
     assert len(output_calls) >= 1
     messages = output_calls[-1].kwargs["messages"]
     # First message is the input, last is assistant
@@ -559,9 +546,7 @@ async def test_final_only_mode_no_periodic_checks():
         output_check_interval=None,
         **COMMON_KWARGS,
     )
-    result = [
-        item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.03))
-    ]
+    result = [item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.03))]
     assert result == [1, 2, 3, 4, 5]
     assert client.asense.call_count == 2  # input + final only
     assert len(guard.output_operations) == 1  # final only
@@ -604,11 +589,7 @@ async def test_final_only_mode_accumulates_text():
     result = [item async for item in guard.shield(_async_iter(chunks))]
     assert result == chunks
 
-    output_calls = [
-        c
-        for c in client.asense.call_args_list
-        if c.kwargs.get("sensor") == "output-sensor"
-    ]
+    output_calls = [c for c in client.asense.call_args_list if c.kwargs.get("sensor") == "output-sensor"]
     assert len(output_calls) == 1  # final only
     messages = output_calls[0].kwargs["messages"]
     assert messages[-1]["content"] == "Hello world"
@@ -628,9 +609,7 @@ async def test_final_only_no_mid_stream_interruption():
         **COMMON_KWARGS,
     )
     # All chunks delivered — no mid-stream interruption
-    result = [
-        item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.03))
-    ]
+    result = [item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.03))]
     assert result == [1, 2, 3, 4, 5]
     assert guard.output_triggered  # detected in final check
 
@@ -1058,9 +1037,7 @@ class TestStripMarkdownImagesChunks:
 
         chunk = _make_openai_chunk("Check ![logo](http://evil.com/track.png) here")
         result = strip_markdown_images(chunk)
-        assert result.choices[0].delta.content == (
-            "Check [logo](http://evil.com/track.png) here"
-        )
+        assert result.choices[0].delta.content == ("Check [logo](http://evil.com/track.png) here")
 
     def test_chunk_without_images(self):
         from stihia.processors import strip_markdown_images
@@ -1173,11 +1150,7 @@ async def test_output_sensing_accumulates_raw_text():
     assert result == ["HELLO"]
 
     # Verify output sense received raw (lowercase) text
-    output_calls = [
-        c
-        for c in client.asense.call_args_list
-        if c.kwargs.get("sensor") == "output-sensor"
-    ]
+    output_calls = [c for c in client.asense.call_args_list if c.kwargs.get("sensor") == "output-sensor"]
     assert len(output_calls) >= 1
     messages = output_calls[-1].kwargs["messages"]
     assert messages[-1]["content"] == "hello"  # raw, not "HELLO"
@@ -1274,11 +1247,7 @@ async def test_output_only_no_input_gate():
     assert guard.input_operation is None
     assert guard.output_operation is not None
     # Only output calls — no input sense call
-    input_calls = [
-        c
-        for c in client.asense.call_args_list
-        if c.kwargs.get("sensor") != "output-sensor"
-    ]
+    input_calls = [c for c in client.asense.call_args_list if c.kwargs.get("sensor") != "output-sensor"]
     assert len(input_calls) == 0
 
 

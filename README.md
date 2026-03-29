@@ -1,5 +1,10 @@
 # Stihia SDK for Python
 
+[![CI](https://github.com/stihia-ai/stihia-sdk-python/actions/workflows/ci.yml/badge.svg)](https://github.com/stihia-ai/stihia-sdk-python/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/stihia)](https://pypi.org/project/stihia/)
+[![Python](https://img.shields.io/pypi/pyversions/stihia)](https://pypi.org/project/stihia/)
+[![License](https://img.shields.io/github/license/stihia-ai/stihia-sdk-python)](LICENSE)
+
 Python SDK for the Stihia real-time threat detection API for AI systems.
 
 ## Installation
@@ -315,3 +320,26 @@ The decorator lifts the function so that:
 - `default-input` - Input-focused comprehensive threat detection
 - `default-output` - Output-focused comprehensive threat detection
 - `default-input-think` - Input-focused comprehensive threat detection with additional reasoning
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup and guidelines.
+
+```bash
+git clone https://github.com/stihia-ai/stihia-sdk-python.git
+cd stihia-sdk-python
+uv sync --all-extras
+uv run pytest
+```
+
+## Security
+
+To report a security vulnerability, please see [SECURITY.md](SECURITY.md). **Do not open a public issue for security reports.**
+
+## Contributing
+
+Contributions are welcome! Please read the [Contributing Guide](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md) before submitting a pull request.
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).

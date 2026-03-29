@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 import respx
+
 from stihia.client import StihiaClient
 from stihia.exceptions import StihiaAPIError
 from stihia.models import Message, OperationStatus, SenseRequest
@@ -79,9 +80,7 @@ def test_client_initialization(api_key, project_key, user_key, process_key, thre
     client.close()
 
 
-def test_client_initialization_from_env_var(
-    monkeypatch, project_key, user_key, process_key, thread_key
-):
+def test_client_initialization_from_env_var(monkeypatch, project_key, user_key, process_key, thread_key):
     """Test StihiaClient reads API key from STIHIA_API_KEY env var."""
     env_api_key = "sk-env-test-456"
     monkeypatch.setenv("STIHIA_API_KEY", env_api_key)
@@ -100,9 +99,7 @@ def test_client_initialization_from_env_var(
     client.close()
 
 
-def test_client_explicit_api_key_takes_precedence(
-    monkeypatch, api_key, project_key, user_key, process_key, thread_key
-):
+def test_client_explicit_api_key_takes_precedence(monkeypatch, api_key, project_key, user_key, process_key, thread_key):
     """Test explicit api_key parameter takes precedence over env var."""
     env_api_key = "sk-env-test-789"
     monkeypatch.setenv("STIHIA_API_KEY", env_api_key)
@@ -118,16 +115,14 @@ def test_client_explicit_api_key_takes_precedence(
     client.close()
 
 
-def test_client_raises_error_when_no_api_key(
-    monkeypatch, project_key, user_key, process_key, thread_key
-):
+def test_client_raises_error_when_no_api_key(monkeypatch, project_key, user_key, process_key, thread_key):
     """Test client raises ValueError when no API key is provided."""
     # Ensure env var is not set
     monkeypatch.delenv("STIHIA_API_KEY", raising=False)
 
     with pytest.raises(
         ValueError,
-        match="api_key is required. Provide it directly or set STIHIA_API_KEY env var.",
+        match=r"api_key is required. Provide it directly or set STIHIA_API_KEY env var.",
     ):
         StihiaClient(
             project_key=project_key,
@@ -137,9 +132,7 @@ def test_client_raises_error_when_no_api_key(
         )
 
 
-def test_client_requires_project_key(
-    api_key, user_key, process_key, thread_key, test_messages, run_key
-):
+def test_client_requires_project_key(api_key, user_key, process_key, thread_key, test_messages, run_key):
     """Test client raises error if project_key is missing."""
     client = StihiaClient(
         api_key=api_key,
@@ -158,9 +151,7 @@ def test_client_requires_project_key(
     client.close()
 
 
-def test_client_requires_user_key(
-    api_key, project_key, process_key, thread_key, test_messages, run_key
-):
+def test_client_requires_user_key(api_key, project_key, process_key, thread_key, test_messages, run_key):
     """Test client raises error if user_key is missing."""
     client = StihiaClient(
         api_key=api_key,
@@ -179,9 +170,7 @@ def test_client_requires_user_key(
     client.close()
 
 
-def test_client_requires_process_key(
-    api_key, project_key, user_key, thread_key, test_messages, run_key
-):
+def test_client_requires_process_key(api_key, project_key, user_key, thread_key, test_messages, run_key):
     """Test client raises error if process_key is missing."""
     client = StihiaClient(
         api_key=api_key,
@@ -200,9 +189,7 @@ def test_client_requires_process_key(
     client.close()
 
 
-def test_client_requires_thread_key(
-    api_key, project_key, user_key, process_key, test_messages, run_key
-):
+def test_client_requires_thread_key(api_key, project_key, user_key, process_key, test_messages, run_key):
     """Test client raises error if thread_key is missing."""
     client = StihiaClient(
         api_key=api_key,
@@ -221,9 +208,7 @@ def test_client_requires_thread_key(
     client.close()
 
 
-def test_client_requires_run_key(
-    api_key, project_key, user_key, process_key, thread_key, test_messages
-):
+def test_client_requires_run_key(api_key, project_key, user_key, process_key, thread_key, test_messages):
     """Test client raises error if run_key is missing."""
     client = StihiaClient(
         api_key=api_key,
@@ -254,9 +239,7 @@ def test_client_sense_success(
     mock_sense_response,
 ):
     """Test successful sense call."""
-    respx.post("https://api.stihia.ai/v1/sense").mock(
-        return_value=httpx.Response(200, json=mock_sense_response)
-    )
+    respx.post("https://api.stihia.ai/v1/sense").mock(return_value=httpx.Response(200, json=mock_sense_response))
 
     client = StihiaClient(
         api_key=api_key,
@@ -293,9 +276,7 @@ async def test_client_asense_success(
     mock_sense_response,
 ):
     """Test successful async sense call."""
-    respx.post("https://api.stihia.ai/v1/sense").mock(
-        return_value=httpx.Response(200, json=mock_sense_response)
-    )
+    respx.post("https://api.stihia.ai/v1/sense").mock(return_value=httpx.Response(200, json=mock_sense_response))
 
     client = StihiaClient(
         api_key=api_key,
@@ -318,9 +299,7 @@ async def test_client_asense_success(
 
 
 @respx.mock
-def test_client_sense_api_error(
-    api_key, project_key, user_key, process_key, thread_key, test_messages, run_key
-):
+def test_client_sense_api_error(api_key, project_key, user_key, process_key, thread_key, test_messages, run_key):
     """Test sense call with API error."""
     respx.post("https://api.stihia.ai/v1/sense").mock(
         return_value=httpx.Response(400, json={"detail": "Invalid sensor"})
@@ -360,9 +339,7 @@ async def test_client_sense_background(
     mock_sense_response,
 ):
     """Test background sense call."""
-    respx.post("https://api.stihia.ai/v1/sense").mock(
-        return_value=httpx.Response(200, json=mock_sense_response)
-    )
+    respx.post("https://api.stihia.ai/v1/sense").mock(return_value=httpx.Response(200, json=mock_sense_response))
 
     client = StihiaClient(
         api_key=api_key,
@@ -411,9 +388,7 @@ def test_client_converts_message_objects(
 ):
     """Test client converts Message objects to dicts."""
     with respx.mock:
-        respx.post("https://api.stihia.ai/v1/sense").mock(
-            return_value=httpx.Response(200, json=mock_sense_response)
-        )
+        respx.post("https://api.stihia.ai/v1/sense").mock(return_value=httpx.Response(200, json=mock_sense_response))
 
         client = StihiaClient(
             api_key=api_key,
@@ -439,9 +414,7 @@ def test_client_converts_message_objects(
         client.close()
 
 
-def test_client_context_manager(
-    api_key, project_key, user_key, process_key, thread_key
-):
+def test_client_context_manager(api_key, project_key, user_key, process_key, thread_key):
     """Test StihiaClient as context manager."""
     with StihiaClient(
         api_key=api_key,
@@ -454,9 +427,7 @@ def test_client_context_manager(
 
 
 @pytest.mark.asyncio
-async def test_client_async_context_manager(
-    api_key, project_key, user_key, process_key, thread_key
-):
+async def test_client_async_context_manager(api_key, project_key, user_key, process_key, thread_key):
     """Test StihiaClient as async context manager."""
     async with StihiaClient(
         api_key=api_key,
@@ -472,9 +443,7 @@ async def test_client_async_context_manager(
 
 
 @pytest.fixture
-def sense_request(
-    project_key, user_key, process_key, thread_key, run_key, test_messages
-):
+def sense_request(project_key, user_key, process_key, thread_key, run_key, test_messages):
     """Pre-built SenseRequest for overload tests."""
     return SenseRequest(
         project_key=project_key,
@@ -490,9 +459,7 @@ def sense_request(
 @respx.mock
 def test_sense_with_request_object(api_key, sense_request, mock_sense_response):
     """Test sense() accepts a pre-built SenseRequest (positional)."""
-    respx.post("https://api.stihia.ai/v1/sense").mock(
-        return_value=httpx.Response(200, json=mock_sense_response)
-    )
+    respx.post("https://api.stihia.ai/v1/sense").mock(return_value=httpx.Response(200, json=mock_sense_response))
 
     # No client defaults needed — SenseRequest is self-contained
     client = StihiaClient(api_key=api_key)
@@ -506,9 +473,7 @@ def test_sense_with_request_object(api_key, sense_request, mock_sense_response):
 @respx.mock
 def test_sense_request_bypasses_key_resolution(api_key, mock_sense_response):
     """SenseRequest path doesn't use client defaults or StihiaContext."""
-    respx.post("https://api.stihia.ai/v1/sense").mock(
-        return_value=httpx.Response(200, json=mock_sense_response)
-    )
+    respx.post("https://api.stihia.ai/v1/sense").mock(return_value=httpx.Response(200, json=mock_sense_response))
 
     # Client has NO defaults — would fail with kwargs path
     client = StihiaClient(api_key=api_key)
@@ -541,9 +506,7 @@ def test_sense_request_bypasses_key_resolution(api_key, mock_sense_response):
 @pytest.mark.asyncio
 async def test_asense_with_request_object(api_key, sense_request, mock_sense_response):
     """Test asense() accepts a pre-built SenseRequest."""
-    respx.post("https://api.stihia.ai/v1/sense").mock(
-        return_value=httpx.Response(200, json=mock_sense_response)
-    )
+    respx.post("https://api.stihia.ai/v1/sense").mock(return_value=httpx.Response(200, json=mock_sense_response))
 
     client = StihiaClient(api_key=api_key)
     result = await client.asense(sense_request)
@@ -555,13 +518,9 @@ async def test_asense_with_request_object(api_key, sense_request, mock_sense_res
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_sense_background_with_request_object(
-    api_key, sense_request, mock_sense_response
-):
+async def test_sense_background_with_request_object(api_key, sense_request, mock_sense_response):
     """Test sense_background() accepts a pre-built SenseRequest."""
-    respx.post("https://api.stihia.ai/v1/sense").mock(
-        return_value=httpx.Response(200, json=mock_sense_response)
-    )
+    respx.post("https://api.stihia.ai/v1/sense").mock(return_value=httpx.Response(200, json=mock_sense_response))
 
     client = StihiaClient(api_key=api_key)
     completed = []
@@ -632,18 +591,14 @@ def test_build_sense_request_raises_missing_key(api_key, test_messages, run_key)
     """build_sense_request() raises ValueError when required keys are missing."""
     client = StihiaClient(api_key=api_key)
     with pytest.raises(ValueError, match="project_key is required"):
-        client.build_sense_request(
-            messages=test_messages, sensor="default", run_key=run_key
-        )
+        client.build_sense_request(messages=test_messages, sensor="default", run_key=run_key)
     client.close()
 
 
 @respx.mock
 def test_sense_request_reuse_across_calls(api_key, sense_request, mock_sense_response):
     """Same SenseRequest can be used for multiple sense() calls."""
-    respx.post("https://api.stihia.ai/v1/sense").mock(
-        return_value=httpx.Response(200, json=mock_sense_response)
-    )
+    respx.post("https://api.stihia.ai/v1/sense").mock(return_value=httpx.Response(200, json=mock_sense_response))
 
     client = StihiaClient(api_key=api_key)
     r1 = client.sense(sense_request)

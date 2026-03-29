@@ -81,10 +81,7 @@ class StihiaClient:
         """
         resolved_api_key = api_key or os.environ.get("STIHIA_API_KEY")
         if not resolved_api_key:
-            raise ValueError(
-                "api_key is required. Provide it directly or "
-                "set STIHIA_API_KEY env var."
-            )
+            raise ValueError("api_key is required. Provide it directly or set STIHIA_API_KEY env var.")
         self.api_key = resolved_api_key
         self.base_url = base_url.rstrip("/")
         self.project_key = project_key
@@ -103,9 +100,7 @@ class StihiaClient:
             timeout=self.timeout,
             headers=self._get_headers(),
         )
-        self._background_manager = BackgroundTaskManager(
-            max_workers=max_background_workers
-        )
+        self._background_manager = BackgroundTaskManager(max_workers=max_background_workers)
 
     def _get_headers(self) -> dict[str, str]:
         """Get HTTP headers for requests."""
@@ -154,20 +149,13 @@ class StihiaClient:
         final_run_key = run_key or get_current_run_key()
 
         if not final_project_key:
-            raise ValueError(
-                "project_key is required (provide in constructor or method)"
-            )
+            raise ValueError("project_key is required (provide in constructor or method)")
         if not final_user_key:
             raise ValueError("user_key is required (provide in constructor or method)")
         if not final_process_key:
-            raise ValueError(
-                "process_key is required (provide in constructor or method)"
-            )
+            raise ValueError("process_key is required (provide in constructor or method)")
         if not final_thread_key:
-            raise ValueError(
-                "thread_key is required "
-                "(provide in constructor, method, or StihiaContext)"
-            )
+            raise ValueError("thread_key is required (provide in constructor, method, or StihiaContext)")
         if not final_run_key:
             raise ValueError("run_key is required (provide in method or StihiaContext)")
 
@@ -266,9 +254,7 @@ class StihiaClient:
             raise StihiaAPIError(e.response.status_code, detail) from e
         except httpx.RequestError as e:
             detail = str(e) or repr(e)
-            raise StihiaAPIError(
-                0, f"Request error ({type(e).__name__}): {detail}"
-            ) from e
+            raise StihiaAPIError(0, f"Request error ({type(e).__name__}): {detail}") from e
 
     async def _send_sense_async(self, request_data: dict[str, Any]) -> SenseOperation:
         """Send an async sense request and handle errors.
@@ -296,9 +282,7 @@ class StihiaClient:
             raise StihiaAPIError(e.response.status_code, detail) from e
         except httpx.RequestError as e:
             detail = str(e) or repr(e)
-            raise StihiaAPIError(
-                0, f"Request error ({type(e).__name__}): {detail}"
-            ) from e
+            raise StihiaAPIError(0, f"Request error ({type(e).__name__}): {detail}") from e
 
     # -- sense() ---------------------------------------------------------------
 

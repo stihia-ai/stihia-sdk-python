@@ -19,17 +19,19 @@ for observability hooks.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from collections.abc import AsyncIterable, AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
 
 from stihia.exceptions import StihiaError, StihiaThreatDetectedError
 from stihia.models import SignalSeverity
-from stihia.processors import PostProcessor
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterable, AsyncIterator, Callable
+
     from stihia.client import StihiaClient
     from stihia.models import Message, SenseOperation, SenseResult, SignalPayload
+    from stihia.processors import PostProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +43,7 @@ _SEVERITY_ORDER: dict[SignalSeverity, int] = {
 }
 
 
-def _severity_meets_threshold(
-    severity: SignalSeverity, threshold: SignalSeverity
-) -> bool:
+def _severity_meets_threshold(severity: SignalSeverity, threshold: SignalSeverity) -> bool:
     return _SEVERITY_ORDER.get(severity, 0) >= _SEVERITY_ORDER.get(threshold, 0)
 
 
@@ -332,9 +332,7 @@ class SenseGuard:
         """Centralized trigger evaluation for a signal payload."""
         return _severity_meets_threshold(payload.severity, self._min_severity)
 
-    async def _fire_on_trigger(
-        self, source: str, operation: SenseOperation | None
-    ) -> None:
+    async def _fire_on_trigger(self, source: str, operation: SenseOperation | None) -> None:
         """Call the on_trigger callback if set."""
         if self._on_trigger is not None:
             result = self._on_trigger(source, operation)
@@ -365,9 +363,7 @@ class SenseGuard:
         self._input_operation = operation
         if operation.payload and operation.payload.sense_result:
             self._input_result = operation.payload.sense_result
-            if self._should_trigger(
-                operation.payload.sense_result.aggregated_signal.payload
-            ):
+            if self._should_trigger(operation.payload.sense_result.aggregated_signal.payload):
                 self._input_triggered = True
 
     def _evaluate_output_operation(self, operation: SenseOperation) -> bool:
@@ -393,9 +389,7 @@ class SenseGuard:
             return
         self._evaluate_output_operation(operation)
 
-    def _build_output_messages(
-        self, accumulated_text: str
-    ) -> list[dict[str, str]] | list[Message]:
+    def _build_output_messages(self, accumulated_text: str) -> list[dict[str, str]] | list[Message]:
         msgs: list[dict[str, str]] = []
         for m in self._messages:
             if isinstance(m, dict):
@@ -409,18 +403,14 @@ class SenseGuard:
         """Await the input task, applying ``input_timeout`` if set."""
         try:
             if self._input_timeout is not None:
-                await asyncio.wait_for(
-                    asyncio.shield(input_task), timeout=self._input_timeout
-                )
+                await asyncio.wait_for(asyncio.shield(input_task), timeout=self._input_timeout)
             else:
                 await input_task
         except TimeoutError:
             self._input_error = TimeoutError()
             input_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await input_task
-            except (asyncio.CancelledError, Exception):
-                pass
         except Exception:
             pass  # _process_input_task handles errors via task.result()
 
@@ -454,9 +444,7 @@ class SenseGuard:
                 handle_threat(guard.input_result or guard.output_result)
         """
         if self._shield_called:
-            raise RuntimeError(
-                "shield() can only be called once per SenseGuard instance"
-            )
+            raise RuntimeError("shield() can only be called once per SenseGuard instance")
         self._shield_called = True
 
         # Start input sense task (skip when no input sensor)
@@ -490,9 +478,7 @@ class SenseGuard:
                         await self._fire_on_trigger("input", self._input_operation)
                         if self._raise_on_trigger:
                             if self._input_operation is not None:
-                                raise StihiaThreatDetectedError(
-                                    self._input_operation, source="input"
-                                )
+                                raise StihiaThreatDetectedError(self._input_operation, source="input")
                             raise StihiaError("Guardrail unavailable (fail_open=False)")
                         return
                 first_chunk = False
@@ -502,35 +488,24 @@ class SenseGuard:
                     if task.done():
                         self._process_output_task(task)
                         if self._output_triggered:
-                            await self._fire_on_trigger(
-                                "output", self._output_operation
-                            )
+                            await self._fire_on_trigger("output", self._output_operation)
                             if self._raise_on_trigger:
                                 if self._output_operation is not None:
-                                    raise StihiaThreatDetectedError(
-                                        self._output_operation, source="output"
-                                    )
-                                raise StihiaError(
-                                    "Guardrail unavailable (fail_open=False)"
-                                )
+                                    raise StihiaThreatDetectedError(self._output_operation, source="output")
+                                raise StihiaError("Guardrail unavailable (fail_open=False)")
                             return
                 # Remove completed tasks from list
                 output_tasks = [t for t in output_tasks if not t.done()]
 
                 # Fire periodic output check if interval elapsed
-                if (
-                    self._output_sensor is not None
-                    and self._output_check_interval is not None
-                ):
+                if self._output_sensor is not None and self._output_check_interval is not None:
                     now = loop.time()
                     if now - last_check_time >= self._output_check_interval:
                         last_check_time = now
                         output_tasks.append(
                             asyncio.create_task(
                                 self._client.asense(
-                                    messages=self._build_output_messages(
-                                        accumulated_text
-                                    ),
+                                    messages=self._build_output_messages(accumulated_text),
                                     sensor=self._output_sensor,
                                     **self._sense_kwargs,
                                 )
@@ -550,10 +525,8 @@ class SenseGuard:
                     self._process_output_task(task)
                 else:
                     task.cancel()
-                    try:
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
                         await task
-                    except (asyncio.CancelledError, Exception):
-                        pass
             output_tasks.clear()
 
             # Final output check with full accumulated text
@@ -573,9 +546,7 @@ class SenseGuard:
                         if final_op.payload and final_op.payload.sense_result:
                             self._output_result = final_op.payload.sense_result
                 except Exception as exc:
-                    logger.warning(
-                        "Sense API error in SenseGuard (output final): %s", exc
-                    )
+                    logger.warning("Sense API error in SenseGuard (output final): %s", exc)
                     self._output_error = exc
                     if not self._fail_open:
                         self._output_triggered = True
@@ -583,14 +554,10 @@ class SenseGuard:
         finally:
             if input_task is not None and not input_task.done():
                 input_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
                     await input_task
-                except (asyncio.CancelledError, Exception):
-                    pass
             for task in output_tasks:
                 if not task.done():
                     task.cancel()
-                    try:
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
                         await task
-                    except (asyncio.CancelledError, Exception):
-                        pass

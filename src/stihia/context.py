@@ -12,15 +12,11 @@ as ``contextvars`` so that ``StihiaClient`` resolves them automatically
 without explicit arguments on every call.
 """
 
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from uuid import uuid4
 
-_current_process_key: ContextVar[str | None] = ContextVar(
-    "stihia_process_key", default=None
-)
-_current_thread_key: ContextVar[str | None] = ContextVar(
-    "stihia_thread_key", default=None
-)
+_current_process_key: ContextVar[str | None] = ContextVar("stihia_process_key", default=None)
+_current_thread_key: ContextVar[str | None] = ContextVar("stihia_thread_key", default=None)
 _current_run_key: ContextVar[str | None] = ContextVar("stihia_run_key", default=None)
 
 
@@ -58,9 +54,9 @@ class StihiaContext:
         self.process_key = process_key
         self.thread_key = thread_key or str(uuid4())
         self.run_key = run_key or str(uuid4())
-        self._process_token = None
-        self._thread_token = None
-        self._run_token = None
+        self._process_token: Token[str | None] | None = None
+        self._thread_token: Token[str | None] | None = None
+        self._run_token: Token[str | None] | None = None
 
     def __enter__(self) -> "StihiaContext":
         """Enter context and set run_key, process_key, and thread_key."""

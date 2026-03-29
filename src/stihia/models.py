@@ -58,9 +58,7 @@ class SenseRequest(BaseModel):
     """Request body sent to ``/v1/sense``. Built automatically by ``StihiaClient``."""
 
     # Required for tracing: Client-provided keys
-    project_key: Annotated[
-        str, Field(..., description="Unique project key defined by the client")
-    ]
+    project_key: Annotated[str, Field(..., description="Unique project key defined by the client")]
     user_key: Annotated[
         str,
         Field(
@@ -68,22 +66,15 @@ class SenseRequest(BaseModel):
             description="User who triggered the run. User key defined by the client.",
         ),
     ]
-    process_key: Annotated[
-        str, Field(..., description="Unique process key defined by the client")
-    ]
+    process_key: Annotated[str, Field(..., description="Unique process key defined by the client")]
     thread_key: Annotated[
         str,
         Field(
             ...,
-            description=(
-                "Groups consecutive runs with shared context. "
-                "Thread key defined by the client."
-            ),
+            description=("Groups consecutive runs with shared context. Thread key defined by the client."),
         ),
     ]
-    run_key: Annotated[
-        str, Field(..., description="Unique run key defined by the client")
-    ]
+    run_key: Annotated[str, Field(..., description="Unique run key defined by the client")]
 
     # Optional for future compatibility: Server-generated IDs
     project_uid: Annotated[
@@ -143,12 +134,8 @@ class OperationMetadata(BaseModel):
     """Status, tracing keys, and timing for a sense operation (``op.metadata``)."""
 
     # Status Metadata
-    status: Annotated[
-        OperationStatus, Field(..., description="Status of the operation")
-    ]
-    errors: Annotated[
-        list[str], Field(default_factory=list, description="List of errors")
-    ]
+    status: Annotated[OperationStatus, Field(..., description="Status of the operation")]
+    errors: Annotated[list[str], Field(default_factory=list, description="List of errors")]
 
     # Tracing Metadata
     org_uid: Annotated[
@@ -159,9 +146,7 @@ class OperationMetadata(BaseModel):
         str,
         Field(..., description="Name of the organization"),
     ]
-    project_key: Annotated[
-        str, Field(..., description="Project key provided by the client")
-    ]
+    project_key: Annotated[str, Field(..., description="Project key provided by the client")]
     project_uid: Annotated[
         str | None,
         Field(default=None, description="Internally generated Project ID"),
@@ -177,9 +162,7 @@ class OperationMetadata(BaseModel):
         str | None,
         Field(default=None, description="Internally generated User ID"),
     ]
-    process_key: Annotated[
-        str, Field(..., description="Process key provided by the client")
-    ]
+    process_key: Annotated[str, Field(..., description="Process key provided by the client")]
     process_uid: Annotated[
         str | None,
         Field(default=None, description="Internally generated Process ID"),
@@ -188,10 +171,7 @@ class OperationMetadata(BaseModel):
         str,
         Field(
             ...,
-            description=(
-                "Groups consecutive runs with shared context. "
-                "Thread key defined by the client."
-            ),
+            description=("Groups consecutive runs with shared context. Thread key defined by the client."),
         ),
     ]
     thread_uid: Annotated[
@@ -205,12 +185,8 @@ class OperationMetadata(BaseModel):
     ]
 
     # Performance Metadata (always UTC)
-    start_timestamp: Annotated[
-        AwareDatetime, Field(..., description="Start timestamp of the operation (UTC)")
-    ]
-    end_timestamp: Annotated[
-        AwareDatetime, Field(..., description="End timestamp of the operation (UTC)")
-    ]
+    start_timestamp: Annotated[AwareDatetime, Field(..., description="Start timestamp of the operation (UTC)")]
+    end_timestamp: Annotated[AwareDatetime, Field(..., description="End timestamp of the operation (UTC)")]
     processing_time_ms: Annotated[
         int | None,
         Field(default=None, description="Processing time in milliseconds"),
@@ -250,21 +226,11 @@ class SignalSeverity(StrEnum):
 class SignalPayload(BaseModel):
     """Core detection data: severity, categories, and confidence score."""
 
-    severity: Annotated[
-        SignalSeverity, Field(..., description="Severity of the signal")
-    ]
-    categories: Annotated[
-        list[SignalCategory], Field(..., description="Categories of the signal")
-    ]
-    subcategory: Annotated[
-        str | None, Field(default=None, description="Subcategory of the signal")
-    ]
-    details: Annotated[
-        dict[str, Any], Field(default_factory=dict, description="Details of the signal")
-    ]
-    confidence: Annotated[
-        float, Field(ge=0.0, le=1.0, description="Confidence of the signal")
-    ]
+    severity: Annotated[SignalSeverity, Field(..., description="Severity of the signal")]
+    categories: Annotated[list[SignalCategory], Field(..., description="Categories of the signal")]
+    subcategory: Annotated[str | None, Field(default=None, description="Subcategory of the signal")]
+    details: Annotated[dict[str, Any], Field(default_factory=dict, description="Details of the signal")]
+    confidence: Annotated[float, Field(ge=0.0, le=1.0, description="Confidence of the signal")]
 
 
 class AggregatedSignal(BaseModel):
@@ -292,20 +258,14 @@ class ClassifierSignal(BaseModel):
     uid: Annotated[str, Field(..., description="Unique internal signal ID")]
     payload: Annotated[SignalPayload, Field(..., description="Payload of the signal")]
     latency_ms: Annotated[int, Field(default=0, description="Latency in milliseconds")]
-    classifier: Annotated[
-        dict[str, Any], Field(..., description="Classifier that produced the signal")
-    ]
+    classifier: Annotated[dict[str, Any], Field(..., description="Classifier that produced the signal")]
 
 
 class SenseResult(BaseModel):
     """Full sense result containing aggregated and per-classifier signals."""
 
-    aggregated_signal: Annotated[
-        AggregatedSignal, Field(..., description="Aggregated signal")
-    ]
-    signals: Annotated[
-        list[ClassifierSignal], Field(..., description="Individual signals")
-    ]
+    aggregated_signal: Annotated[AggregatedSignal, Field(..., description="Aggregated signal")]
+    signals: Annotated[list[ClassifierSignal], Field(..., description="Individual signals")]
     errors: Annotated[
         list[str],
         Field(default_factory=list, description="Classifier errors during execution"),
@@ -331,9 +291,7 @@ class SenseOperationPayload(BaseModel):
         SenseResult | None,
         Field(default=None, description="Result of the sense operation"),
     ]
-    sensor: Annotated[
-        dict[str, Any], Field(..., description="Sensor that was used for the operation")
-    ]
+    sensor: Annotated[dict[str, Any], Field(..., description="Sensor that was used for the operation")]
 
 
 class Operation[PayloadT](BaseModel):
@@ -343,12 +301,8 @@ class Operation[PayloadT](BaseModel):
     """
 
     uid: Annotated[str, Field(..., description="Unique internal operation ID")]
-    metadata: Annotated[
-        OperationMetadata, Field(..., description="Metadata of the operation")
-    ]
-    payload: Annotated[
-        PayloadT | None, Field(default=None, description="Payload of the operation")
-    ]
+    metadata: Annotated[OperationMetadata, Field(..., description="Metadata of the operation")]
+    payload: Annotated[PayloadT | None, Field(default=None, description="Payload of the operation")]
 
 
 #: Concrete type returned by ``StihiaClient.sense()`` / ``asense()``.

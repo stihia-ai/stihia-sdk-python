@@ -1,6 +1,7 @@
 """Background task manager for fire-and-forget execution."""
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Callable, Coroutine
@@ -45,9 +46,7 @@ class BackgroundTaskManager:
             on_error: Optional callback on error
         """
         if self._shutdown:
-            logger.warning(
-                "BackgroundTaskManager is shut down, ignoring task submission"
-            )
+            logger.warning("BackgroundTaskManager is shut down, ignoring task submission")
             coro.close()  # Properly clean up the coroutine
             return
 
@@ -78,9 +77,7 @@ class BackgroundTaskManager:
             on_error: Optional callback on error
         """
         if self._shutdown:
-            logger.warning(
-                "BackgroundTaskManager is shut down, ignoring task submission"
-            )
+            logger.warning("BackgroundTaskManager is shut down, ignoring task submission")
             return
 
         self._executor.submit(self._run_sync_in_thread, func, on_complete, on_error)
@@ -229,7 +226,5 @@ class BackgroundTaskManager:
     def __del__(self):
         """Cleanup on deletion."""
         if not self._shutdown:
-            try:
+            with contextlib.suppress(Exception):
                 self.shutdown(timeout=1.0)
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass

@@ -31,15 +31,11 @@ class StihiaThreatDetectedError(StihiaError):
         """
         self.operation = operation
         self.source = source or "unknown"
-        self.severity = (
-            operation.payload.sense_result.aggregated_signal.payload.severity
-        )
-        self.categories = (
-            operation.payload.sense_result.aggregated_signal.payload.categories
-        )
-        super().__init__(
-            f"Threat detected: {self.severity} severity, categories: {self.categories}"
-        )
+        assert operation.payload is not None
+        assert operation.payload.sense_result is not None
+        self.severity = operation.payload.sense_result.aggregated_signal.payload.severity
+        self.categories = operation.payload.sense_result.aggregated_signal.payload.categories
+        super().__init__(f"Threat detected: {self.severity} severity, categories: {self.categories}")
 
 
 class StihiaAPIError(StihiaError):

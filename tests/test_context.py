@@ -3,6 +3,7 @@
 import asyncio
 
 import pytest
+
 from stihia import (
     StihiaContext,
     get_current_process_key,
@@ -60,9 +61,7 @@ def test_context_sets_process_key():
 
 def test_context_sets_both_keys():
     """Test that context sets both run_key and process_key."""
-    with StihiaContext(
-        process_key="my-process", thread_key="test-thread", run_key="my-run"
-    ) as ctx:
+    with StihiaContext(process_key="my-process", thread_key="test-thread", run_key="my-run") as ctx:
         assert ctx.process_key == "my-process"
         assert get_current_process_key() == "my-process"
         assert ctx.thread_key == "test-thread"
@@ -80,9 +79,7 @@ def test_context_sets_thread_key():
 
 def test_context_sets_all_keys():
     """Test that context sets run_key, process_key, and thread_key."""
-    with StihiaContext(
-        process_key="my-process", thread_key="my-thread", run_key="my-run"
-    ) as ctx:
+    with StihiaContext(process_key="my-process", thread_key="my-thread", run_key="my-run") as ctx:
         assert ctx.process_key == "my-process"
         assert get_current_process_key() == "my-process"
         assert ctx.thread_key == "my-thread"
@@ -130,16 +127,12 @@ def test_context_restores_previous_state():
 
 def test_nested_contexts():
     """Test nested contexts work correctly."""
-    with StihiaContext(
-        process_key="outer-process", thread_key="outer-thread", run_key="outer"
-    ) as outer:
+    with StihiaContext(process_key="outer-process", thread_key="outer-thread", run_key="outer") as outer:
         assert get_current_process_key() == "outer-process"
         assert get_current_thread_key() == "outer-thread"
         assert get_current_run_key() == "outer"
 
-        with StihiaContext(
-            process_key="inner-process", thread_key="inner-thread", run_key="inner"
-        ) as inner:
+        with StihiaContext(process_key="inner-process", thread_key="inner-thread", run_key="inner") as inner:
             assert inner.process_key == "inner-process"
             assert get_current_process_key() == "inner-process"
             assert inner.thread_key == "inner-thread"
@@ -183,9 +176,7 @@ def test_process_key_optional():
 @pytest.mark.asyncio
 async def test_async_context():
     """Test async context manager."""
-    async with StihiaContext(
-        process_key="async-process", thread_key="async-thread"
-    ) as ctx:
+    async with StihiaContext(process_key="async-process", thread_key="async-thread") as ctx:
         assert ctx.process_key == "async-process"
         assert get_current_process_key() == "async-process"
         assert ctx.thread_key == "async-thread"
@@ -201,9 +192,7 @@ async def test_async_context():
 @pytest.mark.asyncio
 async def test_async_context_with_custom_keys():
     """Test async context with custom keys."""
-    async with StihiaContext(
-        process_key="async-process", thread_key="async-thread", run_key="async-run"
-    ) as ctx:
+    async with StihiaContext(process_key="async-process", thread_key="async-thread", run_key="async-run") as ctx:
         assert ctx.process_key == "async-process"
         assert get_current_process_key() == "async-process"
         assert ctx.thread_key == "async-thread"
@@ -254,9 +243,7 @@ def test_exception_in_context_restores_state():
     assert get_current_thread_key() is None
 
     try:
-        with StihiaContext(
-            process_key="test-process", thread_key="test-thread", run_key="test"
-        ):
+        with StihiaContext(process_key="test-process", thread_key="test-thread", run_key="test"):
             assert get_current_process_key() == "test-process"
             assert get_current_thread_key() == "test-thread"
             assert get_current_run_key() == "test"

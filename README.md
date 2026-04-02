@@ -8,6 +8,82 @@
 
 Python SDK for the Stihia real-time threat detection API for AI systems.
 
+## Getting Started
+
+This guide walks you through everything you need to start protecting your AI application with Stihia — from creating your account to seeing your first threat detection trace.
+
+### 1. Create your Stihia account
+
+Sign up for a free account at **[app.stihia.ai](https://app.stihia.ai)**. You can register with your email or use a social login.
+
+### 2. Set up your organization
+
+Once logged in, create a new **organization** — this is the workspace where your projects and team members live.
+
+After creating the organization, head to **[Organization](https://app.stihia.ai/organization) → Notification Settings** to configure email alerts. This way, you'll be notified whenever Stihia detects a threat in any of your projects.
+
+### 3. Create an API key
+
+Navigate to **[Organization](https://app.stihia.ai/organization) → API Keys** and click **Create API Key**. Copy the generated key (it starts with `sk_`) — you'll need it in the next step.
+
+> **Keep your API key safe.** Treat it like a password. Don't commit it to version control — use environment variables instead (see [Configuration](#configuration) below).
+
+### 4. Install the SDK
+
+```bash
+pip install stihia
+```
+
+### 5. Run your first threat detection
+
+Create a file called `quickstart.py` and paste the following:
+
+```python
+import os
+from stihia import StihiaClient
+
+# Best practice: load your API key from an environment variable
+# export STIHIA_API_KEY="sk_..."
+client = StihiaClient(
+    api_key=os.environ["STIHIA_API_KEY"],
+    project_key="my-first-project",
+    user_key="user-1",
+    process_key="quickstart",
+)
+
+# Send a message for threat detection
+result = client.sense(
+    messages=[{"role": "user", "content": "Hello, world!"}],
+    sensor="default",
+)
+
+severity = result.payload.sense_result.aggregated_signal.payload.severity
+print(f"Threat severity: {severity}")
+```
+
+Run it:
+
+```bash
+export STIHIA_API_KEY="sk_..."
+python quickstart.py
+```
+
+That's it — you just ran your first Stihia sense operation! 🎉
+
+### 6. View your traces in the Stihia Console
+
+Every sense call is recorded as an OpenTelemetry trace. Open the **[Stihia Console Threads page](https://app.stihia.ai/threads)** to see a real-time timeline of all detections, drill into individual traces, and review threat severity details across your projects.
+
+### 7. Explore the API reference
+
+For the full list of endpoints, parameters, and response schemas, check out the **[API Reference](https://stihia.ai/api/reference/)**.
+
+### 8. Need custom sensor configurations?
+
+The default sensors cover general threats. If your use case requires more specialized detection — such as industry-specific compliance, custom threat categories, or fine-tuned sensitivity — **contact us at [support@stihia.ai](mailto:support@stihia.ai)** and we'll work with you to configure sensors tailored to your needs.
+
+---
+
 ## Installation
 
 ```bash

@@ -306,7 +306,7 @@ async def test_output_final_check_after_stream():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=999.0,  # no periodic checks
+        output_check_interval=999,  # no periodic checks
         **COMMON_KWARGS,
     )
     result = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
@@ -327,7 +327,7 @@ async def test_output_trigger_mid_stream_raises():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=0.01,  # fire quickly
+        output_check_interval=1,  # fire quickly
         **COMMON_KWARGS,
     )
     with pytest.raises(StihiaThreatDetectedError) as exc_info:
@@ -347,7 +347,7 @@ async def test_output_trigger_mid_stream_silent():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=0.01,
+        output_check_interval=1,
         raise_on_trigger=False,
         **COMMON_KWARGS,
     )
@@ -368,7 +368,7 @@ async def test_output_final_check_blocks_and_raises():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=999.0,
+        output_check_interval=999,
         **COMMON_KWARGS,
     )
     with pytest.raises(StihiaThreatDetectedError) as exc_info:
@@ -388,7 +388,7 @@ async def test_periodic_output_checks_fire():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=0.02,
+        output_check_interval=2,
         **COMMON_KWARGS,
     )
     result = [item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.03))]
@@ -410,7 +410,7 @@ async def test_chunk_to_text_callback():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=999.0,
+        output_check_interval=999,
         chunk_to_text=lambda c: c["text"],
         **COMMON_KWARGS,
     )
@@ -436,7 +436,7 @@ async def test_output_messages_include_input():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=999.0,
+        output_check_interval=999,
         **COMMON_KWARGS,
     )
     _ = [item async for item in guard.shield(_async_iter(["a", "b"]))]
@@ -470,7 +470,7 @@ async def test_combined_triggered_property():
     guard2 = SenseGuard(
         client2,
         output_sensor="output-sensor",
-        output_check_interval=999.0,
+        output_check_interval=999,
         **COMMON_KWARGS,
     )
     with pytest.raises(StihiaThreatDetectedError):
@@ -491,7 +491,7 @@ async def test_output_api_error():
         client,
         fail_open=True,
         output_sensor="output-sensor",
-        output_check_interval=999.0,
+        output_check_interval=999,
         **COMMON_KWARGS,
     )
     result = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
@@ -522,7 +522,7 @@ async def test_threat_error_has_source_output():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=0.01,
+        output_check_interval=1,
         **COMMON_KWARGS,
     )
     with pytest.raises(StihiaThreatDetectedError) as exc_info:
@@ -754,7 +754,7 @@ async def test_fail_open_false_output_error_triggers():
         fail_open=False,
         raise_on_trigger=False,
         output_sensor="output-sensor",
-        output_check_interval=999.0,
+        output_check_interval=999,
         **COMMON_KWARGS,
     )
     result = []
@@ -896,7 +896,7 @@ async def test_on_trigger_output_periodic():
         client,
         on_trigger=my_callback,
         output_sensor="output-sensor",
-        output_check_interval=0.01,
+        output_check_interval=1,
         raise_on_trigger=False,
         **COMMON_KWARGS,
     )
@@ -923,7 +923,7 @@ async def test_on_trigger_output_final():
         client,
         on_trigger=my_callback,
         output_sensor="output-sensor",
-        output_check_interval=999.0,
+        output_check_interval=999,
         **COMMON_KWARGS,
     )
     with pytest.raises(StihiaThreatDetectedError):
@@ -1204,7 +1204,7 @@ async def test_output_sensing_accumulates_raw_text():
         client,
         post_processors=[str.upper],
         output_sensor="output-sensor",
-        output_check_interval=999.0,
+        output_check_interval=999,
         **COMMON_KWARGS,
     )
     result = [item async for item in guard.shield(_async_iter(["hello"]))]
@@ -1299,7 +1299,7 @@ async def test_output_only_no_input_gate():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=999.0,
+        output_check_interval=999,
         **NO_INPUT_KWARGS,
     )
     result = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
@@ -1338,7 +1338,7 @@ async def test_output_only_with_trigger():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=999.0,
+        output_check_interval=999,
         **NO_INPUT_KWARGS,
     )
     with pytest.raises(StihiaThreatDetectedError) as exc_info:
@@ -1375,7 +1375,7 @@ async def test_parallel_mode_yields_all_chunks_immediately():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=0.01,
+        output_check_interval=1,
         output_check_mode="parallel",
         **COMMON_KWARGS,
     )
@@ -1394,7 +1394,7 @@ async def test_parallel_mode_periodic_threat_raises_post_stream():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=0.01,
+        output_check_interval=1,
         output_check_mode="parallel",
         **COMMON_KWARGS,
     )
@@ -1415,7 +1415,7 @@ async def test_parallel_mode_final_check_raises():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=999.0,
+        output_check_interval=999,
         output_check_mode="parallel",
         **COMMON_KWARGS,
     )
@@ -1435,7 +1435,7 @@ async def test_parallel_mode_silent_stops_after_stream():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=0.01,
+        output_check_interval=1,
         output_check_mode="parallel",
         raise_on_trigger=False,
         **COMMON_KWARGS,
@@ -1457,7 +1457,7 @@ async def test_parallel_mode_fires_periodic_tasks():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=0.02,
+        output_check_interval=2,
         output_check_mode="parallel",
         **COMMON_KWARGS,
     )
@@ -1484,7 +1484,7 @@ async def test_parallel_mode_on_trigger_callback():
         client,
         on_trigger=my_callback,
         output_sensor="output-sensor",
-        output_check_interval=0.01,
+        output_check_interval=1,
         output_check_mode="parallel",
         raise_on_trigger=False,
         **COMMON_KWARGS,
@@ -1506,7 +1506,7 @@ async def test_parallel_mode_output_api_error_fail_open():
         client,
         fail_open=True,
         output_sensor="output-sensor",
-        output_check_interval=0.01,
+        output_check_interval=1,
         output_check_mode="parallel",
         **COMMON_KWARGS,
     )
@@ -1527,7 +1527,7 @@ async def test_parallel_mode_output_api_error_fail_closed():
         client,
         fail_open=False,
         output_sensor="output-sensor",
-        output_check_interval=0.01,
+        output_check_interval=1,
         output_check_mode="parallel",
         raise_on_trigger=False,
         **COMMON_KWARGS,
@@ -1565,7 +1565,7 @@ async def test_blocking_mode_explicit():
     guard = SenseGuard(
         client,
         output_sensor="output-sensor",
-        output_check_interval=0.01,
+        output_check_interval=1,
         output_check_mode="blocking",
         **COMMON_KWARGS,
     )

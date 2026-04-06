@@ -94,8 +94,9 @@ class SenseGuard:
             no input gate.
         output_sensor: Sensor for output check. ``None`` disables output
             sensing.
-        output_check_interval: Seconds between periodic output checks
-            during streaming. Each check's behavior depends on
+        output_check_interval: Number of output chunks between periodic
+            output checks during streaming. For example, ``30`` fires a
+            check every 30 chunks. Each check's behavior depends on
             ``output_check_mode``. ``None`` disables periodic checks —
             only the final post-stream check runs. In blocking mode with
             ``None``, all chunks are buffered and only released after the
@@ -139,7 +140,7 @@ class SenseGuard:
             messages=[{"role": "user", "content": user_input}],
             input_sensor="default-input",
             output_sensor="default-output",
-            output_check_interval=3.0,  # check output every 3s
+            output_check_interval=30,  # check output every 30 chunks
             project_key="my-app",
             user_key="user-123",
         )
@@ -182,7 +183,7 @@ class SenseGuard:
             client,
             messages=messages,
             output_sensor="default-output",
-            output_check_interval=3.0,
+            output_check_interval=30,
             project_key="my-app",
             user_key="user-123",
         )
@@ -243,7 +244,7 @@ class SenseGuard:
         messages: list[dict[str, str]] | list[Message],
         input_sensor: str | dict[str, Any] | None = None,
         output_sensor: str | dict[str, Any] | None = None,
-        output_check_interval: float | None = None,
+        output_check_interval: int | None = None,
         output_check_mode: Literal["blocking", "parallel"] = "blocking",
         chunk_to_text: Callable[[Any], str] | None = None,
         min_severity: SignalSeverity = SignalSeverity.HIGH,
@@ -476,14 +477,14 @@ class SenseGuard:
 
         Output checks depend on ``output_check_mode``:
 
-        * **blocking** — when an interval elapses, the output sense API call
-          is fired and the stream is **paused**. While the API call is
-          in-flight, the underlying LLM stream continues to be read into an
-          internal buffer. On a green light the buffered chunks are
-          burst-released. If a threat is detected, the stream terminates
-          immediately. When ``output_check_interval`` is ``None``, **all**
-          chunks are buffered internally and delivered only after the final
-          post-stream check passes.
+        * **blocking** — when the chunk count reaches the interval, the
+          output sense API call is fired and the stream is **paused**. While
+          the API call is in-flight, the underlying LLM stream continues to
+          be read into an internal buffer. On a green light the buffered
+          chunks are burst-released. If a threat is detected, the stream
+          terminates immediately. When ``output_check_interval`` is ``None``,
+          **all** chunks are buffered internally and delivered only after the
+          final post-stream check passes.
         * **parallel** — periodic checks run concurrently (fire-and-forget)
           without pausing chunk delivery. All chunks are yielded immediately.
           After the stream completes, pending periodic results are collected.
@@ -528,9 +529,8 @@ class SenseGuard:
                 )
             )
 
-        loop = asyncio.get_event_loop()
         accumulated_text = ""
-        last_check_time = loop.time()
+        chunk_count = 0
         first_chunk = True
         buffer: list[T] = []
         _sentinel = object()
@@ -546,6 +546,7 @@ class SenseGuard:
 
                 if self._output_sensor is not None:
                     accumulated_text += self._chunk_to_text(item)
+                    chunk_count += 1
 
                 if first_chunk and input_task is not None:
                     await self._await_input_task(input_task)
@@ -559,86 +560,87 @@ class SenseGuard:
                         return
                 first_chunk = False
 
-                if self._output_sensor is not None and self._output_check_interval is not None:
-                    now = loop.time()
-                    if now - last_check_time >= self._output_check_interval:
-                        last_check_time = now
+                if (
+                    self._output_sensor is not None
+                    and self._output_check_interval is not None
+                    and chunk_count % self._output_check_interval == 0
+                ):
+                    if self._output_check_mode == "blocking":
+                        check_task = asyncio.create_task(
+                            self._await_output_check(accumulated_text),
+                        )
 
-                        if self._output_check_mode == "blocking":
-                            check_task = asyncio.create_task(
-                                self._await_output_check(accumulated_text),
-                            )
-
-                            # Buffer stream chunks while waiting for the API
-                            # check. We race anext() against the check_task;
-                            # only one caller touches the async iterator at a
-                            # time, avoiding "already running" errors.
-                            stream_done = False
-                            pending_next: asyncio.Task[Any] | None = None
-                            while not check_task.done():
-                                if pending_next is None:
-                                    pending_next = asyncio.create_task(
-                                        anext(aiter, _sentinel),  # type: ignore[arg-type]
-                                    )
-                                done, _ = await asyncio.wait(
-                                    {check_task, pending_next},
-                                    return_when=asyncio.FIRST_COMPLETED,
+                        # Buffer stream chunks while waiting for the API
+                        # check. We race anext() against the check_task;
+                        # only one caller touches the async iterator at a
+                        # time, avoiding "already running" errors.
+                        stream_done = False
+                        pending_next: asyncio.Task[Any] | None = None
+                        while not check_task.done():
+                            if pending_next is None:
+                                pending_next = asyncio.create_task(
+                                    anext(aiter, _sentinel),  # type: ignore[arg-type]
                                 )
-                                if pending_next in done:
-                                    chunk_or_sentinel = pending_next.result()
-                                    pending_next = None
-                                    if chunk_or_sentinel is _sentinel:
-                                        stream_done = True
-                                        break
-                                    if self._output_sensor is not None:
-                                        accumulated_text += self._chunk_to_text(chunk_or_sentinel)
-                                    buffer.append(chunk_or_sentinel)
-
-                            if not check_task.done():
-                                await check_task
-
-                            # Collect any in-flight anext() that was pending
-                            # when the API check completed.
-                            if pending_next is not None and not stream_done:
-                                chunk_or_sentinel = await pending_next
+                            done, _ = await asyncio.wait(
+                                {check_task, pending_next},
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            if pending_next in done:
+                                chunk_or_sentinel = pending_next.result()
+                                pending_next = None
                                 if chunk_or_sentinel is _sentinel:
                                     stream_done = True
-                                else:
-                                    if self._output_sensor is not None:
-                                        accumulated_text += self._chunk_to_text(chunk_or_sentinel)
-                                    buffer.append(chunk_or_sentinel)
+                                    break
+                                if self._output_sensor is not None:
+                                    accumulated_text += self._chunk_to_text(chunk_or_sentinel)
+                                    chunk_count += 1
+                                buffer.append(chunk_or_sentinel)
 
-                            if self._output_triggered:
-                                await self._fire_on_trigger("output", self._output_operation)
-                                if self._raise_on_trigger:
-                                    if self._output_operation is not None:
-                                        raise StihiaThreatDetectedError(
-                                            self._output_operation,
-                                            source="output",
-                                        )
-                                    raise StihiaError("Guardrail unavailable (fail_open=False)")
-                                return
+                        if not check_task.done():
+                            await check_task
 
-                            yield self._apply_post_processors(item)
-                            for buffered in buffer:
-                                yield self._apply_post_processors(buffered)
-                            buffer.clear()
+                        # Collect any in-flight anext() that was pending
+                        # when the API check completed.
+                        if pending_next is not None and not stream_done:
+                            chunk_or_sentinel = await pending_next
+                            if chunk_or_sentinel is _sentinel:
+                                stream_done = True
+                            else:
+                                if self._output_sensor is not None:
+                                    accumulated_text += self._chunk_to_text(chunk_or_sentinel)
+                                    chunk_count += 1
+                                buffer.append(chunk_or_sentinel)
 
-                            if stream_done:
-                                break
-                            last_check_time = loop.time()
-                            continue
+                        if self._output_triggered:
+                            await self._fire_on_trigger("output", self._output_operation)
+                            if self._raise_on_trigger:
+                                if self._output_operation is not None:
+                                    raise StihiaThreatDetectedError(
+                                        self._output_operation,
+                                        source="output",
+                                    )
+                                raise StihiaError("Guardrail unavailable (fail_open=False)")
+                            return
 
-                        # parallel mode: fire-and-forget output check
-                        pending_output_tasks.append(
-                            asyncio.create_task(
-                                self._client.asense(
-                                    messages=self._build_output_messages(accumulated_text),
-                                    sensor=self._output_sensor,
-                                    **self._sense_kwargs,
-                                )
+                        yield self._apply_post_processors(item)
+                        for buffered in buffer:
+                            yield self._apply_post_processors(buffered)
+                        buffer.clear()
+
+                        if stream_done:
+                            break
+                        continue
+
+                    # parallel mode: fire-and-forget output check
+                    pending_output_tasks.append(
+                        asyncio.create_task(
+                            self._client.asense(
+                                messages=self._build_output_messages(accumulated_text),
+                                sensor=self._output_sensor,
+                                **self._sense_kwargs,
                             )
                         )
+                    )
 
                 if (
                     self._output_sensor is not None

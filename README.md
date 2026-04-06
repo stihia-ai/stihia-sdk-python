@@ -268,7 +268,7 @@ guard = SenseGuard(
     messages=[{"role": "user", "content": user_input}],
     input_sensor="default-input",
     output_sensor="default-output",
-    output_check_interval=5.0,
+    output_check_interval=30,
     project_key="my-app",
     user_key="u1",
 )
@@ -288,7 +288,7 @@ guard = SenseGuard(
     client,
     messages=[{"role": "user", "content": user_input}],
     output_sensor="toxic-content",
-    output_check_interval=3.0,
+    output_check_interval=30,
     project_key="my-app",
     user_key="u1",
 )

@@ -6,14 +6,14 @@ complete before the first chunk is yielded ("gate first chunk").
 
 Output checking supports two modes controlled by ``output_check_mode``:
 
-* **blocking** (default) — periodic output sense API calls **pause** chunk
-  delivery until a green light is received. While the API call is in-flight,
-  the underlying LLM stream continues reading into a buffer. On a green
-  light, buffered chunks are burst-released. On a threat, the stream
-  terminates immediately. When ``output_check_interval`` is ``None``, all
-  chunks are buffered internally and only released after the final
-  post-stream check passes. After the stream completes, a final blocking
-  check runs on the full accumulated text.
+* **blocking** (default) — chunks are buffered between periodic output
+  sense API calls and burst-released only after each check returns a green
+  light. While the API call is in-flight, the underlying LLM stream
+  continues reading into the buffer. On a threat, the stream terminates
+  immediately. Any chunks received after the last periodic check boundary
+  are held back and released only after the final post-stream check passes.
+  When ``output_check_interval`` is ``None``, all chunks are buffered
+  internally and only released after the final post-stream check passes.
 
 * **parallel** — periodic output sense API calls run concurrently (fire-and-
   forget) without pausing chunk delivery. Chunks flow to the caller
@@ -72,9 +72,11 @@ class SenseGuard:
 
     Output checks support two modes via ``output_check_mode``:
 
-    * ``"blocking"`` (default) — periodic checks **pause** chunk delivery
-      until the API responds. Buffered chunks are burst-released on green
-      light. On a threat, the stream terminates immediately.
+    * ``"blocking"`` (default) — chunks are buffered between periodic
+      checks and burst-released only when the API returns a green light.
+      Remaining chunks after the last periodic boundary are held until
+      the final post-stream check passes. On a threat, the stream
+      terminates immediately.
     * ``"parallel"`` — periodic checks run concurrently without pausing
       delivery. Chunks flow immediately. Results are collected after the
       stream, and threats raise post-stream.
@@ -101,12 +103,15 @@ class SenseGuard:
             only the final post-stream check runs. In blocking mode with
             ``None``, all chunks are buffered and only released after the
             final check passes.
-        output_check_mode: ``"blocking"`` (default) pauses chunk delivery
-            during each periodic check. When ``output_check_interval`` is
-            ``None``, all chunks are buffered internally and delivered only
-            after the final post-stream check passes. ``"parallel"`` fires
-            checks in the background without pausing. Both modes run a
-            final blocking check after the stream completes.
+        output_check_mode: ``"blocking"`` (default) buffers chunks between
+            periodic checks and burst-releases them on a green light.
+            Remaining chunks after the last periodic boundary are held
+            until the final post-stream check passes. When
+            ``output_check_interval`` is ``None``, all chunks are buffered
+            internally and delivered only after the final post-stream
+            check passes. ``"parallel"`` fires checks in the background
+            without pausing. Both modes run a final blocking check after
+            the stream completes.
         chunk_to_text: Converts a stream chunk to ``str``. Defaults to
             ``str()``.
         min_severity: Minimum severity that counts as "triggered".
@@ -477,14 +482,17 @@ class SenseGuard:
 
         Output checks depend on ``output_check_mode``:
 
-        * **blocking** — when the chunk count reaches the interval, the
-          output sense API call is fired and the stream is **paused**. While
-          the API call is in-flight, the underlying LLM stream continues to
-          be read into an internal buffer. On a green light the buffered
-          chunks are burst-released. If a threat is detected, the stream
-          terminates immediately. When ``output_check_interval`` is ``None``,
-          **all** chunks are buffered internally and delivered only after the
-          final post-stream check passes.
+        * **blocking** — chunks are buffered between periodic checks. When
+          the chunk count reaches the interval, an output sense API call is
+          fired. While the API call is in-flight, the underlying LLM stream
+          continues to be read into the buffer. On a green light, all buffered
+          chunks (including those accumulated before and during the check) are
+          burst-released. If a threat is detected, the stream terminates
+          immediately. Chunks received after the last periodic boundary are
+          held in the buffer and only released after the final post-stream
+          check passes. When ``output_check_interval`` is ``None``, **all**
+          chunks are buffered internally and delivered only after the final
+          post-stream check passes.
         * **parallel** — periodic checks run concurrently (fire-and-forget)
           without pausing chunk delivery. All chunks are yielded immediately.
           After the stream completes, pending periodic results are collected.
@@ -566,6 +574,7 @@ class SenseGuard:
                     and chunk_count % self._output_check_interval == 0
                 ):
                     if self._output_check_mode == "blocking":
+                        pre_check_buf_len = len(buffer)
                         check_task = asyncio.create_task(
                             self._await_output_check(accumulated_text),
                         )
@@ -622,10 +631,10 @@ class SenseGuard:
                                 raise StihiaError("Guardrail unavailable (fail_open=False)")
                             return
 
-                        yield self._apply_post_processors(item)
-                        for buffered in buffer:
+                        for buffered in buffer[:pre_check_buf_len]:
                             yield self._apply_post_processors(buffered)
-                        buffer.clear()
+                        yield self._apply_post_processors(item)
+                        buffer = buffer[pre_check_buf_len:]
 
                         if stream_done:
                             break
@@ -642,11 +651,7 @@ class SenseGuard:
                         )
                     )
 
-                if (
-                    self._output_sensor is not None
-                    and self._output_check_interval is None
-                    and self._output_check_mode == "blocking"
-                ):
+                if self._output_sensor is not None and self._output_check_mode == "blocking":
                     buffer.append(item)
                 else:
                     yield self._apply_post_processors(item)

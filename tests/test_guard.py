@@ -760,8 +760,9 @@ async def test_fail_open_false_output_error_triggers():
     result = []
     async for item in guard.shield(_async_iter([1, 2, 3])):
         result.append(item)
-    # All chunks delivered (final check is post-stream), but output triggered
-    assert result == [1, 2, 3]
+    # Blocking mode: chunks buffered until final check; API error + fail_open=False
+    # triggers before buffer flush, so zero chunks delivered.
+    assert result == []
     assert guard.output_triggered
 
 
@@ -1574,3 +1575,176 @@ async def test_blocking_mode_explicit():
             pass
     assert exc_info.value.source == "output"
     assert guard.output_triggered
+
+
+# ── Blocking interval tail-chunk tests ──
+
+
+@pytest.mark.asyncio
+async def test_blocking_interval_tail_chunks_withheld_until_final_check():
+    """Blocking + interval=3 with 5 chunks: tail (chunks 4-5) not yielded before final check."""
+    yielded_before_final_api: list[int] = []
+    final_api_called = asyncio.Event()
+
+    input_op = _make_sense_operation("low")
+    output_op = _make_sense_operation("low")
+    call_count = 0
+
+    async def mock_asense(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        sensor = kwargs.get("sensor", "")
+        is_output = sensor == "output-sensor"
+        if is_output:
+            if call_count > 2:
+                # This is the final output check (after periodic)
+                final_api_called.set()
+                await asyncio.sleep(0.05)
+            return output_op
+        return input_op
+
+    client = MagicMock()
+    client.asense = AsyncMock(side_effect=mock_asense)
+
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=3,
+        output_check_mode="blocking",
+        **COMMON_KWARGS,
+    )
+
+    result = []
+    async for chunk in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.02)):
+        if not final_api_called.is_set():
+            yielded_before_final_api.append(chunk)
+        result.append(chunk)
+
+    assert result == [1, 2, 3, 4, 5]
+    # Chunks 4 and 5 are tail chunks (after boundary at 3) — they must NOT
+    # appear before the final check API was called.
+    assert 4 not in yielded_before_final_api, "tail chunk 4 must not be yielded before final check"
+    assert 5 not in yielded_before_final_api, "tail chunk 5 must not be yielded before final check"
+
+
+@pytest.mark.asyncio
+async def test_blocking_interval_tail_threat_yields_nothing_after_boundary():
+    """Blocking + interval=3 + 5 chunks: final check HIGH → tail chunks never delivered."""
+    input_op = _make_sense_operation("low")
+    periodic_op = _make_sense_operation("low")
+    final_op = _make_sense_operation("high")
+    call_count = 0
+
+    async def mock_asense(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        sensor = kwargs.get("sensor", "")
+        is_output = sensor == "output-sensor"
+        if is_output:
+            # First output call is the periodic check at chunk 3 → green
+            # Second output call is the final check → threat
+            if call_count <= 2:
+                return periodic_op
+            return final_op
+        return input_op
+
+    client = MagicMock()
+    client.asense = AsyncMock(side_effect=mock_asense)
+
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=3,
+        output_check_mode="blocking",
+        **COMMON_KWARGS,
+    )
+
+    collected: list[int] = []
+    with pytest.raises(StihiaThreatDetectedError) as exc_info:
+        async for chunk in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.02)):
+            collected.append(chunk)
+
+    assert exc_info.value.source == "output"
+    assert guard.output_triggered
+    # Chunks 1-3 released after periodic green, but 4-5 must never be delivered
+    assert 4 not in collected, "tail chunk 4 must not be yielded when final check detects threat"
+    assert 5 not in collected, "tail chunk 5 must not be yielded when final check detects threat"
+
+
+@pytest.mark.asyncio
+async def test_blocking_interval_preserves_chunk_order():
+    """Blocking + interval: chunks yielded in correct order through periodic + tail flush."""
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_op=_make_sense_operation("low"),
+        output_delay=0.01,
+    )
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=3,
+        output_check_mode="blocking",
+        **COMMON_KWARGS,
+    )
+    result = [item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5, 6, 7], delay=0.02))]
+    assert result == [1, 2, 3, 4, 5, 6, 7], "chunk ordering must be preserved across periodic + tail flushes"
+
+
+@pytest.mark.asyncio
+async def test_blocking_interval_tail_silent_mode_no_chunks_on_threat():
+    """Blocking + interval + raise_on_trigger=False: tail chunks suppressed on threat."""
+    input_op = _make_sense_operation("low")
+    periodic_op = _make_sense_operation("low")
+    final_op = _make_sense_operation("high")
+    call_count = 0
+
+    async def mock_asense(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        sensor = kwargs.get("sensor", "")
+        is_output = sensor == "output-sensor"
+        if is_output:
+            if call_count <= 2:
+                return periodic_op
+            return final_op
+        return input_op
+
+    client = MagicMock()
+    client.asense = AsyncMock(side_effect=mock_asense)
+
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=3,
+        output_check_mode="blocking",
+        raise_on_trigger=False,
+        **COMMON_KWARGS,
+    )
+
+    collected: list[int] = []
+    async for chunk in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.02)):
+        collected.append(chunk)
+
+    assert guard.output_triggered
+    # Chunks 1-3 released after periodic green, but 4-5 must never appear
+    assert 4 not in collected, "tail chunk 4 must not be yielded when final check triggers (silent)"
+    assert 5 not in collected, "tail chunk 5 must not be yielded when final check triggers (silent)"
+
+
+@pytest.mark.asyncio
+async def test_blocking_interval_exact_boundary_no_tail():
+    """Blocking + interval=3 + exactly 3 chunks: no tail, all released after periodic green."""
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_op=_make_sense_operation("low"),
+    )
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=3,
+        output_check_mode="blocking",
+        **COMMON_KWARGS,
+    )
+    result = [item async for item in guard.shield(_async_iter([1, 2, 3], delay=0.02))]
+    assert result == [1, 2, 3]
+    assert not guard.output_triggered

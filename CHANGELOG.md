@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## v0.2.1 - 2026-04-06
+
+### Added
+
+- `SignalCategory.DESTRUCTIVE_ACTION` enum value.
+
+### Changed
+
+- `SenseGuard` blocking mode now withholds tail chunks (chunks received after the last periodic boundary) until the final post-stream output check passes.
+
+### Fixed
+
+- `SenseGuard` now validates `output_check_interval` and raises `ValueError` for non-positive values (must be a positive integer or `None`).
+- Blocking output checks now terminate promptly on detected threats without waiting for the next stream chunk.
+- Empty-stream input trigger handling now correctly triggers guard behavior in both raising and silent modes.
+
 ## v0.2.0 - 2026-04-06
 
 ### Added

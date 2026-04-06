@@ -269,6 +269,8 @@ class SenseGuard:
         self._messages = messages
         self._input_sensor = input_sensor
         self._output_sensor = output_sensor
+        if output_check_interval is not None and output_check_interval <= 0:
+            raise ValueError(f"output_check_interval must be a positive integer or None, got {output_check_interval!r}")
         self._output_check_interval = output_check_interval
         if output_check_mode not in ("blocking", "parallel"):
             raise ValueError(f"output_check_mode must be 'blocking' or 'parallel', got {output_check_mode!r}")
@@ -471,6 +473,19 @@ class SenseGuard:
         except Exception:
             pass  # _process_input_task handles errors via task.result()
 
+    async def _close_stream_iterator(self, iterator: Any) -> None:
+        aclose = getattr(iterator, "aclose", None)
+        if callable(aclose):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await aclose()
+
+    async def _handle_trigger(self, source: Literal["input", "output"], operation: SenseOperation | None) -> None:
+        await self._fire_on_trigger(source, operation)
+        if self._raise_on_trigger:
+            if operation is not None:
+                raise StihiaThreatDetectedError(operation, source=source)
+            raise StihiaError("Guardrail unavailable (fail_open=False)")
+
     async def shield[T](self, stream: AsyncIterable[T]) -> AsyncIterator[T]:
         """Wrap *stream* with concurrent input/output guardrails.
 
@@ -560,11 +575,8 @@ class SenseGuard:
                     await self._await_input_task(input_task)
                     self._process_input_task(input_task)
                     if self._input_triggered:
-                        await self._fire_on_trigger("input", self._input_operation)
-                        if self._raise_on_trigger:
-                            if self._input_operation is not None:
-                                raise StihiaThreatDetectedError(self._input_operation, source="input")
-                            raise StihiaError("Guardrail unavailable (fail_open=False)")
+                        await self._close_stream_iterator(aiter)
+                        await self._handle_trigger("input", self._input_operation)
                         return
                 first_chunk = False
 
@@ -608,28 +620,37 @@ class SenseGuard:
                         if not check_task.done():
                             await check_task
 
+                        if self._output_triggered:
+                            if pending_next is not None and not pending_next.done():
+                                pending_next.cancel()
+                                with contextlib.suppress(asyncio.CancelledError, Exception):
+                                    await pending_next
+                            await self._close_stream_iterator(aiter)
+                            await self._handle_trigger("output", self._output_operation)
+                            return
+
                         # Collect any in-flight anext() that was pending
                         # when the API check completed.
                         if pending_next is not None and not stream_done:
-                            chunk_or_sentinel = await pending_next
-                            if chunk_or_sentinel is _sentinel:
-                                stream_done = True
+                            if pending_next.done():
+                                if not pending_next.cancelled():
+                                    chunk_or_sentinel = pending_next.result()
+                                    if chunk_or_sentinel is _sentinel:
+                                        stream_done = True
+                                    else:
+                                        if self._output_sensor is not None:
+                                            accumulated_text += self._chunk_to_text(chunk_or_sentinel)
+                                            chunk_count += 1
+                                        buffer.append(chunk_or_sentinel)
                             else:
-                                if self._output_sensor is not None:
-                                    accumulated_text += self._chunk_to_text(chunk_or_sentinel)
-                                    chunk_count += 1
-                                buffer.append(chunk_or_sentinel)
-
-                        if self._output_triggered:
-                            await self._fire_on_trigger("output", self._output_operation)
-                            if self._raise_on_trigger:
-                                if self._output_operation is not None:
-                                    raise StihiaThreatDetectedError(
-                                        self._output_operation,
-                                        source="output",
-                                    )
-                                raise StihiaError("Guardrail unavailable (fail_open=False)")
-                            return
+                                chunk_or_sentinel = await pending_next
+                                if chunk_or_sentinel is _sentinel:
+                                    stream_done = True
+                                else:
+                                    if self._output_sensor is not None:
+                                        accumulated_text += self._chunk_to_text(chunk_or_sentinel)
+                                        chunk_count += 1
+                                    buffer.append(chunk_or_sentinel)
 
                         for buffered in buffer[:pre_check_buf_len]:
                             yield self._apply_post_processors(buffered)
@@ -659,6 +680,10 @@ class SenseGuard:
             if first_chunk and input_task is not None:
                 await self._await_input_task(input_task)
                 self._process_input_task(input_task)
+                if self._input_triggered:
+                    await self._close_stream_iterator(aiter)
+                    await self._handle_trigger("input", self._input_operation)
+                    return
 
             for ptask in pending_output_tasks:
                 if not ptask.done():
@@ -668,21 +693,15 @@ class SenseGuard:
                     self._process_output_task(ptask)
 
             if self._output_triggered:
-                await self._fire_on_trigger("output", self._output_operation)
-                if self._raise_on_trigger:
-                    if self._output_operation is not None:
-                        raise StihiaThreatDetectedError(self._output_operation, source="output")
-                    raise StihiaError("Guardrail unavailable (fail_open=False)")
+                await self._close_stream_iterator(aiter)
+                await self._handle_trigger("output", self._output_operation)
                 return
 
             if self._output_sensor is not None:
                 await self._await_output_check(accumulated_text)
                 if self._output_triggered:
-                    await self._fire_on_trigger("output", self._output_operation)
-                    if self._raise_on_trigger:
-                        if self._output_operation is not None:
-                            raise StihiaThreatDetectedError(self._output_operation, source="output")
-                        raise StihiaError("Guardrail unavailable (fail_open=False)")
+                    await self._close_stream_iterator(aiter)
+                    await self._handle_trigger("output", self._output_operation)
                     return
 
                 if self._output_operations:

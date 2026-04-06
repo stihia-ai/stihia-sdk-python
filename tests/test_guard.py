@@ -1557,6 +1557,20 @@ async def test_invalid_mode_raises():
 
 
 @pytest.mark.asyncio
+async def test_invalid_interval_raises_for_zero():
+    client = _make_client(_make_sense_operation("low"))
+    with pytest.raises(ValueError, match="output_check_interval"):
+        SenseGuard(client, output_check_interval=0, **COMMON_KWARGS)
+
+
+@pytest.mark.asyncio
+async def test_invalid_interval_raises_for_negative():
+    client = _make_client(_make_sense_operation("low"))
+    with pytest.raises(ValueError, match="output_check_interval"):
+        SenseGuard(client, output_check_interval=-1, **COMMON_KWARGS)
+
+
+@pytest.mark.asyncio
 async def test_blocking_mode_explicit():
     """Explicitly passing output_check_mode='blocking' uses blocking behavior."""
     client = _make_split_client(
@@ -1748,3 +1762,62 @@ async def test_blocking_interval_exact_boundary_no_tail():
     result = [item async for item in guard.shield(_async_iter([1, 2, 3], delay=0.02))]
     assert result == [1, 2, 3]
     assert not guard.output_triggered
+
+
+@pytest.mark.asyncio
+async def test_empty_stream_input_trigger_raises():
+    client = _make_client(_make_sense_operation("high"))
+    guard = SenseGuard(client, **COMMON_KWARGS)
+    with pytest.raises(StihiaThreatDetectedError) as exc_info:
+        _ = [item async for item in guard.shield(_async_iter([]))]
+    assert exc_info.value.source == "input"
+    assert guard.input_triggered
+
+
+@pytest.mark.asyncio
+async def test_empty_stream_input_trigger_silent_mode():
+    client = _make_client(_make_sense_operation("high"))
+    guard = SenseGuard(client, raise_on_trigger=False, **COMMON_KWARGS)
+    result = [item async for item in guard.shield(_async_iter([]))]
+    assert result == []
+    assert guard.input_triggered
+
+
+@pytest.mark.asyncio
+async def test_blocking_periodic_trigger_does_not_wait_for_next_chunk():
+    input_op = _make_sense_operation("low")
+    output_op = _make_sense_operation("high")
+
+    async def mock_asense(**kwargs):
+        sensor = kwargs.get("sensor", "")
+        is_output = sensor == "output-sensor"
+        if is_output:
+            return output_op
+        return input_op
+
+    async def delayed_stream():
+        yield 1
+        await asyncio.sleep(3600)
+        yield 2
+
+    client = MagicMock()
+    client.asense = AsyncMock(side_effect=mock_asense)
+
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=1,
+        output_check_mode="blocking",
+        **COMMON_KWARGS,
+    )
+
+    with pytest.raises(StihiaThreatDetectedError) as exc_info:
+        await asyncio.wait_for(
+            asyncio.create_task(
+                anext(guard.shield(delayed_stream()).__aiter__()),
+            ),
+            timeout=0.2,
+        )
+
+    assert exc_info.value.source == "output"
+    assert guard.output_triggered

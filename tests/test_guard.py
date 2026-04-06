@@ -359,9 +359,8 @@ async def test_output_trigger_mid_stream_silent():
 
 
 @pytest.mark.asyncio
-async def test_output_final_check_no_raise():
-    """Final output check returns HIGH — no exception (data delivered),
-    output_triggered=True."""
+async def test_output_final_check_blocks_and_raises():
+    """Final output check returns HIGH — blocks output, raises exception."""
     client = _make_split_client(
         input_op=_make_sense_operation("low"),
         output_op=_make_sense_operation("high"),
@@ -372,8 +371,9 @@ async def test_output_final_check_no_raise():
         output_check_interval=999.0,
         **COMMON_KWARGS,
     )
-    result = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
-    assert result == [1, 2, 3]  # all delivered
+    with pytest.raises(StihiaThreatDetectedError) as exc_info:
+        _ = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
+    assert exc_info.value.source == "output"
     assert guard.output_triggered
     assert guard.output_operation is not None
 
@@ -462,7 +462,7 @@ async def test_combined_triggered_property():
     assert not guard.output_triggered
     assert guard.triggered
 
-    # Output triggered (via final check)
+    # Output triggered (via final check) — now blocks and raises
     client2 = _make_split_client(
         input_op=_make_sense_operation("low"),
         output_op=_make_sense_operation("high"),
@@ -473,7 +473,8 @@ async def test_combined_triggered_property():
         output_check_interval=999.0,
         **COMMON_KWARGS,
     )
-    _ = [item async for item in guard2.shield(_async_iter([1]))]
+    with pytest.raises(StihiaThreatDetectedError):
+        _ = [item async for item in guard2.shield(_async_iter([1]))]
     assert not guard2.input_triggered
     assert guard2.output_triggered
     assert guard2.triggered
@@ -554,7 +555,7 @@ async def test_final_only_mode_no_periodic_checks():
 
 @pytest.mark.asyncio
 async def test_final_only_mode_detects_threat():
-    """Final check still detects HIGH severity in final-only mode."""
+    """Final check detects HIGH severity in final-only mode — blocks and raises."""
     client = _make_split_client(
         input_op=_make_sense_operation("low"),
         output_op=_make_sense_operation("high"),
@@ -565,8 +566,9 @@ async def test_final_only_mode_detects_threat():
         output_check_interval=None,
         **COMMON_KWARGS,
     )
-    result = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
-    assert result == [1, 2, 3]  # all delivered
+    with pytest.raises(StihiaThreatDetectedError) as exc_info:
+        _ = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
+    assert exc_info.value.source == "output"
     assert guard.output_triggered
     assert guard.output_operation is not None
 
@@ -597,7 +599,7 @@ async def test_final_only_mode_accumulates_text():
 
 @pytest.mark.asyncio
 async def test_final_only_no_mid_stream_interruption():
-    """HIGH output threat does NOT raise mid-stream in final-only mode."""
+    """Final-only mode: chunks buffer during stream, final check blocks and raises on HIGH."""
     client = _make_split_client(
         input_op=_make_sense_operation("low"),
         output_op=_make_sense_operation("high"),
@@ -608,10 +610,70 @@ async def test_final_only_no_mid_stream_interruption():
         output_check_interval=None,
         **COMMON_KWARGS,
     )
-    # All chunks delivered — no mid-stream interruption
-    result = [item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.03))]
-    assert result == [1, 2, 3, 4, 5]
-    assert guard.output_triggered  # detected in final check
+    with pytest.raises(StihiaThreatDetectedError) as exc_info:
+        _ = [item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.03))]
+    assert exc_info.value.source == "output"
+    assert guard.output_triggered
+
+
+@pytest.mark.asyncio
+async def test_final_only_blocking_withholds_chunks_until_check():
+    """Blocking + interval=None: no chunks yielded until final check completes."""
+    yielded_before_api: list[int] = []
+    api_called = asyncio.Event()
+
+    input_op = _make_sense_operation("low")
+    output_op = _make_sense_operation("low")
+
+    async def mock_asense(**kwargs):
+        sensor = kwargs.get("sensor", "")
+        is_output = sensor == "output-sensor"
+        if is_output:
+            api_called.set()
+            await asyncio.sleep(0.05)
+            return output_op
+        return input_op
+
+    client = MagicMock()
+    client.asense = AsyncMock(side_effect=mock_asense)
+
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=None,
+        **COMMON_KWARGS,
+    )
+
+    result = []
+    async for chunk in guard.shield(_async_iter([1, 2, 3], delay=0.02)):
+        if not api_called.is_set():
+            yielded_before_api.append(chunk)
+        result.append(chunk)
+
+    assert result == [1, 2, 3]
+    assert yielded_before_api == [], "chunks must not be yielded before the output API check"
+
+
+@pytest.mark.asyncio
+async def test_final_only_blocking_threat_yields_nothing():
+    """Blocking + interval=None + threat: zero chunks reach the caller."""
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_op=_make_sense_operation("high"),
+    )
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=None,
+        **COMMON_KWARGS,
+    )
+    collected: list[int] = []
+    with pytest.raises(StihiaThreatDetectedError):
+        async for chunk in guard.shield(_async_iter([1, 2, 3])):
+            collected.append(chunk)
+
+    assert collected == [], "no chunks should be yielded when the final check detects a threat"
+    assert guard.output_triggered
 
 
 @pytest.mark.asyncio
@@ -847,7 +909,7 @@ async def test_on_trigger_output_periodic():
 
 @pytest.mark.asyncio
 async def test_on_trigger_output_final():
-    """Callback fires on final output trigger."""
+    """Callback fires on final output trigger, then raises."""
     callback_calls = []
 
     def my_callback(source, operation):
@@ -861,12 +923,11 @@ async def test_on_trigger_output_final():
         client,
         on_trigger=my_callback,
         output_sensor="output-sensor",
-        output_check_interval=999.0,  # no periodic, only final
+        output_check_interval=999.0,
         **COMMON_KWARGS,
     )
-    # Final check doesn't raise, just sets triggered
-    result = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
-    assert result == [1, 2, 3]
+    with pytest.raises(StihiaThreatDetectedError):
+        _ = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
     assert guard.output_triggered
     assert len(callback_calls) == 1
     assert callback_calls[0][0] == "output"
@@ -1270,7 +1331,7 @@ async def test_no_sensors_passthrough():
 
 @pytest.mark.asyncio
 async def test_output_only_with_trigger():
-    """Output-only: output threat detected, input properties remain None."""
+    """Output-only: output threat blocks and raises, input properties remain None."""
     client = _make_split_client(
         output_op=_make_sense_operation("high"),
     )
@@ -1280,8 +1341,9 @@ async def test_output_only_with_trigger():
         output_check_interval=999.0,
         **NO_INPUT_KWARGS,
     )
-    result = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
-    assert result == [1, 2, 3]
+    with pytest.raises(StihiaThreatDetectedError) as exc_info:
+        _ = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
+    assert exc_info.value.source == "output"
     assert guard.output_triggered
     assert not guard.input_triggered
     assert guard.input_operation is None
@@ -1297,3 +1359,218 @@ async def test_no_sensors_empty_stream():
     assert result == []
     assert not guard.triggered
     assert client.asense.call_count == 0
+
+
+# ── output_check_mode tests ──
+
+
+@pytest.mark.asyncio
+async def test_parallel_mode_yields_all_chunks_immediately():
+    """Parallel mode delivers all chunks without waiting for periodic checks."""
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_op=_make_sense_operation("low"),
+        output_delay=0.2,
+    )
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=0.01,
+        output_check_mode="parallel",
+        **COMMON_KWARGS,
+    )
+    result = [item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.03))]
+    assert result == [1, 2, 3, 4, 5]
+    assert not guard.triggered
+
+
+@pytest.mark.asyncio
+async def test_parallel_mode_periodic_threat_raises_post_stream():
+    """Parallel: periodic HIGH detected → raises after all chunks delivered."""
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_op=_make_sense_operation("high"),
+    )
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=0.01,
+        output_check_mode="parallel",
+        **COMMON_KWARGS,
+    )
+    with pytest.raises(StihiaThreatDetectedError) as exc_info:
+        async for _ in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.05)):
+            pass
+    assert exc_info.value.source == "output"
+    assert guard.output_triggered
+
+
+@pytest.mark.asyncio
+async def test_parallel_mode_final_check_raises():
+    """Parallel: final check HIGH → raises after all chunks delivered."""
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_op=_make_sense_operation("high"),
+    )
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=999.0,
+        output_check_mode="parallel",
+        **COMMON_KWARGS,
+    )
+    with pytest.raises(StihiaThreatDetectedError) as exc_info:
+        _ = [item async for item in guard.shield(_async_iter([1, 2, 3]))]
+    assert exc_info.value.source == "output"
+    assert guard.output_triggered
+
+
+@pytest.mark.asyncio
+async def test_parallel_mode_silent_stops_after_stream():
+    """Parallel + raise_on_trigger=False: all chunks delivered, triggered set."""
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_op=_make_sense_operation("high"),
+    )
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=0.01,
+        output_check_mode="parallel",
+        raise_on_trigger=False,
+        **COMMON_KWARGS,
+    )
+    result = []
+    async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.05)):
+        result.append(item)
+    assert result == [1, 2, 3, 4, 5]
+    assert guard.output_triggered
+
+
+@pytest.mark.asyncio
+async def test_parallel_mode_fires_periodic_tasks():
+    """Parallel mode fires periodic output checks in the background."""
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_op=_make_sense_operation("low"),
+    )
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=0.02,
+        output_check_mode="parallel",
+        **COMMON_KWARGS,
+    )
+    result = [item async for item in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.03))]
+    assert result == [1, 2, 3, 4, 5]
+    # At least 1 periodic + 1 final = 2 output calls, plus 1 input call
+    assert client.asense.call_count >= 3
+    assert len(guard.output_operations) >= 2
+
+
+@pytest.mark.asyncio
+async def test_parallel_mode_on_trigger_callback():
+    """Parallel: on_trigger callback fires for periodic threat after stream."""
+    callback_calls = []
+
+    def my_callback(source, operation):
+        callback_calls.append((source, operation))
+
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_op=_make_sense_operation("high"),
+    )
+    guard = SenseGuard(
+        client,
+        on_trigger=my_callback,
+        output_sensor="output-sensor",
+        output_check_interval=0.01,
+        output_check_mode="parallel",
+        raise_on_trigger=False,
+        **COMMON_KWARGS,
+    )
+    async for _ in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.05)):
+        pass
+    assert len(callback_calls) >= 1
+    assert callback_calls[0][0] == "output"
+
+
+@pytest.mark.asyncio
+async def test_parallel_mode_output_api_error_fail_open():
+    """Parallel + output API error + fail_open=True → all chunks, no trigger."""
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_error=RuntimeError("Output API down"),
+    )
+    guard = SenseGuard(
+        client,
+        fail_open=True,
+        output_sensor="output-sensor",
+        output_check_interval=0.01,
+        output_check_mode="parallel",
+        **COMMON_KWARGS,
+    )
+    result = [item async for item in guard.shield(_async_iter([1, 2, 3], delay=0.05))]
+    assert result == [1, 2, 3]
+    assert not guard.output_triggered
+    assert guard.output_error is not None
+
+
+@pytest.mark.asyncio
+async def test_parallel_mode_output_api_error_fail_closed():
+    """Parallel + output API error + fail_open=False → triggered after stream."""
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_error=RuntimeError("Output API down"),
+    )
+    guard = SenseGuard(
+        client,
+        fail_open=False,
+        output_sensor="output-sensor",
+        output_check_interval=0.01,
+        output_check_mode="parallel",
+        raise_on_trigger=False,
+        **COMMON_KWARGS,
+    )
+    result = []
+    async for item in guard.shield(_async_iter([1, 2, 3], delay=0.05)):
+        result.append(item)
+    assert result == [1, 2, 3]
+    assert guard.output_triggered
+
+
+@pytest.mark.asyncio
+async def test_default_mode_is_blocking():
+    """Default output_check_mode is 'blocking'."""
+    client = _make_client(_make_sense_operation("low"))
+    guard = SenseGuard(client, **COMMON_KWARGS)
+    assert guard._output_check_mode == "blocking"
+
+
+@pytest.mark.asyncio
+async def test_invalid_mode_raises():
+    """Invalid output_check_mode raises ValueError."""
+    client = _make_client(_make_sense_operation("low"))
+    with pytest.raises(ValueError, match="output_check_mode"):
+        SenseGuard(client, output_check_mode="invalid", **COMMON_KWARGS)
+
+
+@pytest.mark.asyncio
+async def test_blocking_mode_explicit():
+    """Explicitly passing output_check_mode='blocking' uses blocking behavior."""
+    client = _make_split_client(
+        input_op=_make_sense_operation("low"),
+        output_op=_make_sense_operation("high"),
+    )
+    guard = SenseGuard(
+        client,
+        output_sensor="output-sensor",
+        output_check_interval=0.01,
+        output_check_mode="blocking",
+        **COMMON_KWARGS,
+    )
+    with pytest.raises(StihiaThreatDetectedError) as exc_info:
+        async for _ in guard.shield(_async_iter([1, 2, 3, 4, 5], delay=0.05)):
+            pass
+    assert exc_info.value.source == "output"
+    assert guard.output_triggered

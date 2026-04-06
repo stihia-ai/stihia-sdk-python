@@ -1,15 +1,25 @@
-"""SenseGuard — parallel guardrail for async streams.
+"""SenseGuard — guardrail wrapper for async streams.
 
 Runs input and output security checks concurrently with an async LLM stream.
 The input check starts immediately when ``shield()`` is called and must
 complete before the first chunk is yielded ("gate first chunk").
 
-Output checking uses fire-and-forget periodic checks
-(``output_check_interval``). Chunks are yielded immediately. Set to
-``None`` to skip periodic checks and only run the final post-stream check.
+Output checking supports two modes controlled by ``output_check_mode``:
 
-Both the LLM stream and the input check run concurrently; the first-chunk
-gate ensures zero chunks leak before the input is validated.
+* **blocking** (default) — periodic output sense API calls **pause** chunk
+  delivery until a green light is received. While the API call is in-flight,
+  the underlying LLM stream continues reading into a buffer. On a green
+  light, buffered chunks are burst-released. On a threat, the stream
+  terminates immediately. When ``output_check_interval`` is ``None``, all
+  chunks are buffered internally and only released after the final
+  post-stream check passes. After the stream completes, a final blocking
+  check runs on the full accumulated text.
+
+* **parallel** — periodic output sense API calls run concurrently (fire-and-
+  forget) without pausing chunk delivery. Chunks flow to the caller
+  immediately. After the stream completes, pending periodic results are
+  collected and a final blocking check runs. If any check (periodic or
+  final) detected a threat, the exception is raised post-stream.
 
 Supports ``fail_open=False`` for fail-closed mode (block on API errors),
 ``input_timeout`` to prevent indefinite blocking, and ``on_trigger`` callback
@@ -21,7 +31,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from stihia.exceptions import StihiaError, StihiaThreatDetectedError
 from stihia.models import SignalSeverity
@@ -60,10 +70,18 @@ class SenseGuard:
     completing — no chunks are yielded until the input is validated. When
     ``input_sensor`` is ``None``, chunks flow immediately with no input gate.
 
-    Output checks use fire-and-forget periodic checks
-    (``output_check_interval``). Chunks are yielded immediately. Threats
-    detected mid-stream interrupt the stream, but earlier chunks have
-    already been delivered.
+    Output checks support two modes via ``output_check_mode``:
+
+    * ``"blocking"`` (default) — periodic checks **pause** chunk delivery
+      until the API responds. Buffered chunks are burst-released on green
+      light. On a threat, the stream terminates immediately.
+    * ``"parallel"`` — periodic checks run concurrently without pausing
+      delivery. Chunks flow immediately. Results are collected after the
+      stream, and threats raise post-stream.
+
+    After the stream completes, a final output check runs on the full
+    accumulated text. Remaining buffered chunks are withheld until the
+    final check passes.
 
     After iteration completes (or raises), inspect ``input_triggered``,
     ``output_triggered``, and ``triggered`` to see what was detected.
@@ -76,9 +94,18 @@ class SenseGuard:
             no input gate.
         output_sensor: Sensor for output check. ``None`` disables output
             sensing.
-        output_check_interval: Seconds between periodic (fire-and-forget)
-            output checks during streaming. ``None`` disables periodic
-            checks — only the final post-stream check runs.
+        output_check_interval: Seconds between periodic output checks
+            during streaming. Each check's behavior depends on
+            ``output_check_mode``. ``None`` disables periodic checks —
+            only the final post-stream check runs. In blocking mode with
+            ``None``, all chunks are buffered and only released after the
+            final check passes.
+        output_check_mode: ``"blocking"`` (default) pauses chunk delivery
+            during each periodic check. When ``output_check_interval`` is
+            ``None``, all chunks are buffered internally and delivered only
+            after the final post-stream check passes. ``"parallel"`` fires
+            checks in the background without pausing. Both modes run a
+            final blocking check after the stream completes.
         chunk_to_text: Converts a stream chunk to ``str``. Defaults to
             ``str()``.
         min_severity: Minimum severity that counts as "triggered".
@@ -122,7 +149,7 @@ class SenseGuard:
         except StihiaThreatDetectedError as exc:
             print(f"Blocked by {exc.source} guardrail")
 
-        # 2. Final-only output check (no mid-stream interruptions)
+        # 2. Final-only output check (buffers all, delivers after green light)
         guard = SenseGuard(
             client,
             messages=messages,
@@ -132,12 +159,12 @@ class SenseGuard:
             project_key="my-app",
             user_key="user-123",
         )
-        chunks = []
-        async for chunk in guard.shield(llm.astream(prompt)):
-            chunks.append(chunk)  # all chunks delivered uninterrupted
-
-        if guard.output_triggered:
-            print("Output flagged after completion")
+        try:
+            async for chunk in guard.shield(llm.astream(prompt)):
+                # chunks arrive only after final check passes
+                print(chunk, end="")
+        except StihiaThreatDetectedError as exc:
+            print(f"Output blocked: {exc.source}")
 
         # 3. Input-only (no output sensing)
         guard = SenseGuard(
@@ -217,6 +244,7 @@ class SenseGuard:
         input_sensor: str | dict[str, Any] | None = None,
         output_sensor: str | dict[str, Any] | None = None,
         output_check_interval: float | None = None,
+        output_check_mode: Literal["blocking", "parallel"] = "blocking",
         chunk_to_text: Callable[[Any], str] | None = None,
         min_severity: SignalSeverity = SignalSeverity.HIGH,
         raise_on_trigger: bool = True,
@@ -236,6 +264,9 @@ class SenseGuard:
         self._input_sensor = input_sensor
         self._output_sensor = output_sensor
         self._output_check_interval = output_check_interval
+        if output_check_mode not in ("blocking", "parallel"):
+            raise ValueError(f"output_check_mode must be 'blocking' or 'parallel', got {output_check_mode!r}")
+        self._output_check_mode = output_check_mode
         self._chunk_to_text = chunk_to_text or str
         self._min_severity = min_severity
         self._raise_on_trigger = raise_on_trigger
@@ -389,6 +420,26 @@ class SenseGuard:
             return
         self._evaluate_output_operation(operation)
 
+    async def _await_output_check(self, accumulated_text: str) -> None:
+        """Run an output sense check and block until it completes.
+
+        Sets ``_output_triggered`` / ``_output_operation`` / ``_output_result``
+        on trigger, or ``_output_error`` on API failure.
+        """
+        assert self._output_sensor is not None  # callers guard for None
+        try:
+            operation = await self._client.asense(
+                messages=self._build_output_messages(accumulated_text),
+                sensor=self._output_sensor,
+                **self._sense_kwargs,
+            )
+            self._evaluate_output_operation(operation)
+        except Exception as exc:
+            logger.warning("Sense API error in SenseGuard (output): %s", exc)
+            self._output_error = exc
+            if not self._fail_open:
+                self._output_triggered = True
+
     def _build_output_messages(self, accumulated_text: str) -> list[dict[str, str]] | list[Message]:
         msgs: list[dict[str, str]] = []
         for m in self._messages:
@@ -423,6 +474,26 @@ class SenseGuard:
         maximising concurrency. Can only be called once per ``SenseGuard``
         instance.
 
+        Output checks depend on ``output_check_mode``:
+
+        * **blocking** — when an interval elapses, the output sense API call
+          is fired and the stream is **paused**. While the API call is
+          in-flight, the underlying LLM stream continues to be read into an
+          internal buffer. On a green light the buffered chunks are
+          burst-released. If a threat is detected, the stream terminates
+          immediately. When ``output_check_interval`` is ``None``, **all**
+          chunks are buffered internally and delivered only after the final
+          post-stream check passes.
+        * **parallel** — periodic checks run concurrently (fire-and-forget)
+          without pausing chunk delivery. All chunks are yielded immediately.
+          After the stream completes, pending periodic results are collected.
+          If any detected a threat, the exception is raised post-stream.
+
+        After the stream completes, a final output check runs on the full
+        accumulated text. Remaining buffered chunks are withheld until the
+        final check passes. If the final check detects a threat, those
+        chunks are never delivered.
+
         Args:
             stream: Async iterable of LLM chunks (e.g. ``llm.astream(...)``).
 
@@ -432,7 +503,7 @@ class SenseGuard:
         Raises:
             RuntimeError: If called more than once on the same instance.
             StihiaThreatDetectedError: If a threat is detected mid-stream
-                and ``raise_on_trigger`` is ``True``.
+                or in the final check and ``raise_on_trigger`` is ``True``.
             StihiaError: If guardrail API is unavailable and
                 ``fail_open=False`` with ``raise_on_trigger=True``.
 
@@ -447,7 +518,6 @@ class SenseGuard:
             raise RuntimeError("shield() can only be called once per SenseGuard instance")
         self._shield_called = True
 
-        # Start input sense task (skip when no input sensor)
         input_task: asyncio.Task[SenseOperation] | None = None
         if self._input_sensor is not None:
             input_task = asyncio.create_task(
@@ -461,16 +531,22 @@ class SenseGuard:
         loop = asyncio.get_event_loop()
         accumulated_text = ""
         last_check_time = loop.time()
-        output_tasks: list[asyncio.Task[SenseOperation]] = []
         first_chunk = True
+        buffer: list[T] = []
+        _sentinel = object()
+        aiter = stream.__aiter__()
+        pending_output_tasks: list[asyncio.Task[Any]] = []
 
         try:
-            async for item in stream:
-                # Accumulate text for output sensing
+            while True:
+                nxt = await anext(aiter, _sentinel)
+                if nxt is _sentinel:
+                    break
+                item: T = nxt  # type: ignore[assignment]
+
                 if self._output_sensor is not None:
                     accumulated_text += self._chunk_to_text(item)
 
-                # Gate first chunk on input sense check
                 if first_chunk and input_task is not None:
                     await self._await_input_task(input_task)
                     self._process_input_task(input_task)
@@ -483,26 +559,78 @@ class SenseGuard:
                         return
                 first_chunk = False
 
-                # Check completed output tasks
-                for task in output_tasks:
-                    if task.done():
-                        self._process_output_task(task)
-                        if self._output_triggered:
-                            await self._fire_on_trigger("output", self._output_operation)
-                            if self._raise_on_trigger:
-                                if self._output_operation is not None:
-                                    raise StihiaThreatDetectedError(self._output_operation, source="output")
-                                raise StihiaError("Guardrail unavailable (fail_open=False)")
-                            return
-                # Remove completed tasks from list
-                output_tasks = [t for t in output_tasks if not t.done()]
-
-                # Fire periodic output check if interval elapsed
                 if self._output_sensor is not None and self._output_check_interval is not None:
                     now = loop.time()
                     if now - last_check_time >= self._output_check_interval:
                         last_check_time = now
-                        output_tasks.append(
+
+                        if self._output_check_mode == "blocking":
+                            check_task = asyncio.create_task(
+                                self._await_output_check(accumulated_text),
+                            )
+
+                            # Buffer stream chunks while waiting for the API
+                            # check. We race anext() against the check_task;
+                            # only one caller touches the async iterator at a
+                            # time, avoiding "already running" errors.
+                            stream_done = False
+                            pending_next: asyncio.Task[Any] | None = None
+                            while not check_task.done():
+                                if pending_next is None:
+                                    pending_next = asyncio.create_task(
+                                        anext(aiter, _sentinel),  # type: ignore[arg-type]
+                                    )
+                                done, _ = await asyncio.wait(
+                                    {check_task, pending_next},
+                                    return_when=asyncio.FIRST_COMPLETED,
+                                )
+                                if pending_next in done:
+                                    chunk_or_sentinel = pending_next.result()
+                                    pending_next = None
+                                    if chunk_or_sentinel is _sentinel:
+                                        stream_done = True
+                                        break
+                                    if self._output_sensor is not None:
+                                        accumulated_text += self._chunk_to_text(chunk_or_sentinel)
+                                    buffer.append(chunk_or_sentinel)
+
+                            if not check_task.done():
+                                await check_task
+
+                            # Collect any in-flight anext() that was pending
+                            # when the API check completed.
+                            if pending_next is not None and not stream_done:
+                                chunk_or_sentinel = await pending_next
+                                if chunk_or_sentinel is _sentinel:
+                                    stream_done = True
+                                else:
+                                    if self._output_sensor is not None:
+                                        accumulated_text += self._chunk_to_text(chunk_or_sentinel)
+                                    buffer.append(chunk_or_sentinel)
+
+                            if self._output_triggered:
+                                await self._fire_on_trigger("output", self._output_operation)
+                                if self._raise_on_trigger:
+                                    if self._output_operation is not None:
+                                        raise StihiaThreatDetectedError(
+                                            self._output_operation,
+                                            source="output",
+                                        )
+                                    raise StihiaError("Guardrail unavailable (fail_open=False)")
+                                return
+
+                            yield self._apply_post_processors(item)
+                            for buffered in buffer:
+                                yield self._apply_post_processors(buffered)
+                            buffer.clear()
+
+                            if stream_done:
+                                break
+                            last_check_time = loop.time()
+                            continue
+
+                        # parallel mode: fire-and-forget output check
+                        pending_output_tasks.append(
                             asyncio.create_task(
                                 self._client.asense(
                                     messages=self._build_output_messages(accumulated_text),
@@ -512,52 +640,62 @@ class SenseGuard:
                             )
                         )
 
-                yield self._apply_post_processors(item)
+                if (
+                    self._output_sensor is not None
+                    and self._output_check_interval is None
+                    and self._output_check_mode == "blocking"
+                ):
+                    buffer.append(item)
+                else:
+                    yield self._apply_post_processors(item)
 
-            # Empty stream — input was never gated, process now
             if first_chunk and input_task is not None:
                 await self._await_input_task(input_task)
                 self._process_input_task(input_task)
 
-            # Process completed output tasks, cancel pending ones
-            for task in output_tasks:
-                if task.done():
-                    self._process_output_task(task)
-                else:
-                    task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError, Exception):
-                        await task
-            output_tasks.clear()
+            for ptask in pending_output_tasks:
+                if not ptask.done():
+                    with contextlib.suppress(Exception):
+                        await ptask
+                if not ptask.cancelled():
+                    self._process_output_task(ptask)
 
-            # Final output check with full accumulated text
+            if self._output_triggered:
+                await self._fire_on_trigger("output", self._output_operation)
+                if self._raise_on_trigger:
+                    if self._output_operation is not None:
+                        raise StihiaThreatDetectedError(self._output_operation, source="output")
+                    raise StihiaError("Guardrail unavailable (fail_open=False)")
+                return
+
             if self._output_sensor is not None:
-                try:
-                    final_op = await self._client.asense(
-                        messages=self._build_output_messages(accumulated_text),
-                        sensor=self._output_sensor,
-                        **self._sense_kwargs,
-                    )
-                    triggered = self._evaluate_output_operation(final_op)
-                    if triggered:
-                        await self._fire_on_trigger("output", self._output_operation)
-                    # Set output_operation/result to final if not already triggered
+                await self._await_output_check(accumulated_text)
+                if self._output_triggered:
+                    await self._fire_on_trigger("output", self._output_operation)
+                    if self._raise_on_trigger:
+                        if self._output_operation is not None:
+                            raise StihiaThreatDetectedError(self._output_operation, source="output")
+                        raise StihiaError("Guardrail unavailable (fail_open=False)")
+                    return
+
+                if self._output_operations:
+                    last_op = self._output_operations[-1]
                     if not self._output_triggered:
-                        self._output_operation = final_op
-                        if final_op.payload and final_op.payload.sense_result:
-                            self._output_result = final_op.payload.sense_result
-                except Exception as exc:
-                    logger.warning("Sense API error in SenseGuard (output final): %s", exc)
-                    self._output_error = exc
-                    if not self._fail_open:
-                        self._output_triggered = True
-                        await self._fire_on_trigger("output", None)
+                        self._output_operation = last_op
+                        if last_op.payload and last_op.payload.sense_result:
+                            self._output_result = last_op.payload.sense_result
+
+            for buffered in buffer:
+                yield self._apply_post_processors(buffered)
+            buffer.clear()
+
         finally:
             if input_task is not None and not input_task.done():
                 input_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await input_task
-            for task in output_tasks:
-                if not task.done():
-                    task.cancel()
+            for ptask in pending_output_tasks:
+                if not ptask.done():
+                    ptask.cancel()
                     with contextlib.suppress(asyncio.CancelledError, Exception):
-                        await task
+                        await ptask

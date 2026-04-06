@@ -212,6 +212,7 @@ class SignalCategory(StrEnum):
     PROMPT_INJECTION = "prompt_injection"
     SENSITIVE_DATA = "sensitive_data"
     TOXIC_CONTENT = "toxic_content"
+    DESTRUCTIVE_ACTION = "destructive_action"
 
 
 class SignalSeverity(StrEnum):

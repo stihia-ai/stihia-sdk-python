@@ -11,6 +11,7 @@ from stihia.models import (
     OperationMetadata,
     OperationStatus,
     SenseRequest,
+    SignalCategory,
     SignalSeverity,
 )
 
@@ -147,3 +148,13 @@ def test_signal_severity_enum():
     assert SignalSeverity.MEDIUM == "medium"
     assert SignalSeverity.HIGH == "high"
     assert SignalSeverity.CRITICAL == "critical"
+
+
+def test_signal_category_enum():
+    """Test SignalCategory enum values."""
+    assert SignalCategory.NEUTRAL == "neutral"
+    assert SignalCategory.UNKNOWN == "unknown"
+    assert SignalCategory.PROMPT_INJECTION == "prompt_injection"
+    assert SignalCategory.SENSITIVE_DATA == "sensitive_data"
+    assert SignalCategory.TOXIC_CONTENT == "toxic_content"
+    assert SignalCategory.DESTRUCTIVE_ACTION == "destructive_action"

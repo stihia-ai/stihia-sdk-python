@@ -14,17 +14,19 @@ This guide walks you through everything you need to start protecting your AI app
 
 ### 1. Create your Stihia account
 
+> **Note:** By default, the SDK connects to the cloud-hosted Stihia platform at [app.stihia.ai](https://app.stihia.ai). To use a self-hosted instance of Stihia, pass the `base_url` parameter when initializing the `StihiaClient`.
+
 Sign up for a free account at **[app.stihia.ai](https://app.stihia.ai)**. You can register with your email or use a social login.
 
 ### 2. Set up your organization
 
 Once logged in, create a new **organization** — this is the workspace where your projects and team members live.
 
-After creating the organization, head to **[Organization](https://app.stihia.ai/organization) → Notification Settings** to configure email alerts. This way, you'll be notified whenever Stihia detects a threat in any of your projects.
+After creating the organization, head to **[Your Profile → Organization → Notification Settings](https://app.stihia.ai/organization)** to configure email alerts. This way, you'll be notified whenever Stihia detects a threat in any of your projects.
 
 ### 3. Create an API key
 
-Navigate to **[Organization](https://app.stihia.ai/organization) → API Keys** and click **Create API Key**. Copy the generated key (it starts with `sk_`) — you'll need it in the next step.
+Navigate to **[Your Profile → Organization → API Keys](https://app.stihia.ai/organization)** and click **Create API Key**. Copy the generated key (it starts with `sk_`) — you'll need it in the next step.
 
 > **Keep your API key safe.** Treat it like a password. Don't commit it to version control — use environment variables instead (see [Configuration](#configuration) below).
 
